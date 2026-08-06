@@ -1,0 +1,7 @@
+packages:
+  - "."
+
+packageExtensions:
+  streamdown@1.6.9:
+    dependencies:
+      remark-cjk-friendly-gfm-strikethrough: ^2.3.1
