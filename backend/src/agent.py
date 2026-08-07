@@ -12,17 +12,16 @@ from livekit.agents import (
     inference,
     tokenize,
     room_io,
+    UserInputTranscribedEvent,
 )
 from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
+from prompt import SYSTEM_PROMPT
+
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
-
-# Change this prompt to change what your voice agent does.
-# See README.md for example prompts (customer support, language tutor, receptionist).
-SYSTEM_PROMPT = """You are a friendly voice assistant built to help farmers with day-to-day farming questions and information, through natural spoken conversation. Speak in a mix of Hindi and English (Hinglish) when natural, since that's how most farmers in India communicate comfortably. Keep responses short and clear, since this is a voice interaction — avoid long lists, jargon, or complex sentences. If you don't know something specific, like exact local market prices or region-specific advice, be honest about it and suggest they verify with a local expert or nearby mandi. You can help with questions about crops, sowing seasons, basic farming practices, simple weather-related guidance, common pest or plant disease symptoms explained simply, general mandi price trends, and basic guidance on government schemes or subsidies for farmers. Your responses are concise and without complex formatting, emojis, or symbols."""
 
 
 class Assistant(Agent):
@@ -93,6 +92,34 @@ async def my_agent(ctx: JobContext):
         preemptive_generation=True,
     )
 
+    # Log detected language register for each user turn (Hindi / Hinglish / English)
+    @session.on("user_input_transcribed")
+    def on_user_input_transcribed(ev: UserInputTranscribedEvent):
+        transcript = ev.transcript.strip().lower()
+        if not transcript:
+            return
+
+        # Check for Devanagari script characters (native Hindi)
+        has_devanagari = any(0x0900 <= ord(c) <= 0x097F for c in transcript)
+
+        # Check for common Hinglish / romanized Hindi keywords (farming-focused)
+        hindi_keywords = {
+            "kya", "hai", "aur", "main", "nahin", "aap", "namaste", "shukriya",
+            "mein", "ke", "ki", "se", "ko", "ka", "jo", "toh", "bhi", "ho",
+            "kar", "raha", "rahi", "rha", "mujhe", "mera", "meri", "hum",
+            "tum", "apna", "apni", "karke", "karo", "karna", "tha", "thi",
+            "the", "ab", "kab", "sab", "khet", "fasal", "beej", "kheti",
+            "kisan", "mandi", "barish", "bhaav", "paani",
+        }
+        has_hindi_keywords = any(word in transcript.split() for word in hindi_keywords)
+
+        if has_devanagari:
+            logger.info(f"Detected language register: Hindi (Devanagari) — '{transcript}'")
+        elif has_hindi_keywords:
+            logger.info(f"Detected language register: Hinglish (romanized) — '{transcript}'")
+        else:
+            logger.info(f"Detected language register: English — '{transcript}'")
+
     # To use a realtime model instead of a voice pipeline, use the following session setup instead.
     # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
     # 1. Install livekit-agents[openai]
@@ -129,6 +156,10 @@ async def my_agent(ctx: JobContext):
 
     # Join the room and connect to the user
     await ctx.connect()
+
+    await session.generate_reply(
+        instructions="Greet the farmer warmly in English, introduce yourself as Kisan Sahay, and ask how you can help them today."
+    )
 
 
 if __name__ == "__main__":
