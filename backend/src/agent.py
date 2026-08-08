@@ -157,7 +157,7 @@ async def my_agent(ctx: JobContext):
     await ctx.connect()
 
     await session.generate_reply(
-        instructions="Greet the farmer warmly in English, introduce yourself as Kisan Sahay, and ask how you can help them today."
+        instructions="Greet the farmer warmly, introduce yourself as Kisan Sahay, and ask how you can help them today."
     )
 
 

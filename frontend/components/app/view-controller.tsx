@@ -35,7 +35,6 @@ export function ViewController({ appConfig }: ViewControllerProps) {
   const handleStart = async (question?: string) => {
     setMicErrorMessage(null);
     setIsConnecting(true);
-    if (question) setPendingQuestion(question);
     try {
       await start();
     } catch (err) {

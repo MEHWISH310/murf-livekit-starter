@@ -17,6 +17,13 @@ import {
 import { AppHeader } from '@/components/app/app-header';
 import { cn } from '@/lib/shadcn/utils';
 
+const QUICK_TOPICS = [
+  'Wheat sowing time?',
+  "Today's mandi price?",
+  'Leaf spots on crop',
+  'Govt schemes for me',
+];
+
 function getStateLabel(agentState: string | undefined, isConnected: boolean): string {
   if (!isConnected) return 'Call ended';
   switch (agentState) {
@@ -37,14 +44,48 @@ function getStateLabel(agentState: string | undefined, isConnected: boolean): st
 function getStateColor(agentState: string | undefined): string {
   switch (agentState) {
     case 'listening':
-      return 'ring-blue-500 bg-blue-50';
+      return 'text-blue-700 bg-blue-50 border-blue-200';
     case 'thinking':
-      return 'ring-amber-500 bg-amber-50';
+      return 'text-amber-700 bg-amber-50 border-amber-200';
     case 'speaking':
-      return 'ring-lime-600 bg-lime-100 scale-105';
+      return 'text-lime-700 bg-lime-100 border-lime-300';
+    default:
+      return 'text-muted-foreground bg-muted border-border';
+  }
+}
+
+function getAvatarRing(agentState: string | undefined): string {
+  switch (agentState) {
+    case 'listening':
+      return 'ring-blue-400 bg-blue-50';
+    case 'thinking':
+      return 'ring-amber-400 bg-amber-50';
+    case 'speaking':
+      return 'ring-lime-500 bg-lime-100 scale-105';
     default:
       return 'ring-border bg-muted';
   }
+}
+
+function getPingColor(agentState: string | undefined): string {
+  switch (agentState) {
+    case 'listening':
+      return 'bg-blue-300';
+    case 'speaking':
+      return 'bg-lime-300';
+    default:
+      return '';
+  }
+}
+
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+    .toString()
+    .padStart(2, '0');
+  const s = Math.floor(seconds % 60)
+    .toString()
+    .padStart(2, '0');
+  return `${m}:${s}`;
 }
 
 export interface AgentSessionView_01Props {
@@ -93,6 +134,7 @@ export function AgentSessionView_01({
   const { send } = useChat();
   const hasSentInitial = useRef(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
 
   const controls: AgentControlBarControls = {
     leave: true,
@@ -109,14 +151,33 @@ export function AgentSessionView_01({
   }, [messages]);
 
   useEffect(() => {
-    if (initialMessage && !hasSentInitial.current && session.isConnected) {
+    // Wait for the agent to actually be present in the room (agentState is
+    // only defined once the agent participant has joined) — sending right
+    // when the local participant connects is too early and the agent
+    // never sees the message.
+    if (initialMessage && !hasSentInitial.current && session.isConnected && agentState) {
       hasSentInitial.current = true;
       send(initialMessage);
     }
-  }, [initialMessage, session.isConnected, send]);
+  }, [initialMessage, session.isConnected, agentState, send]);
+
+  // Call duration timer
+  useEffect(() => {
+    if (!session.isConnected) return;
+    const start = Date.now();
+    setElapsed(0);
+    const interval = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - start) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [session.isConnected]);
 
   const label = getStateLabel(agentState, session.isConnected);
   const stateColor = getStateColor(agentState);
+
+  const handleQuickTopic = (topic: string) => {
+    if (session.isConnected) send(topic);
+  };
 
   return (
     <section
@@ -130,20 +191,79 @@ export function AgentSessionView_01({
       <AppHeader />
 
       <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 overflow-hidden p-4 md:flex-row">
-        {/* Left: avatar + state */}
-        <div className="border-border bg-card flex flex-1 flex-col items-center justify-center rounded-xl border p-6">
-          <div
-            className={cn(
-              'mb-6 flex size-40 items-center justify-center rounded-full text-6xl ring-4 transition-all duration-300',
-              stateColor
-            )}
-          >
-            🌾
+        {/* Left: avatar + state + quick topics */}
+        <div className="border-border bg-card relative flex flex-1 flex-col items-center justify-center gap-6 overflow-hidden rounded-xl border p-6">
+          {/* status + timer chips */}
+          <div className="absolute top-4 left-4 flex items-center gap-2">
+            <span
+              className={cn(
+                'flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium',
+                stateColor
+              )}
+            >
+              <span className="size-1.5 animate-pulse rounded-full bg-current" />
+              {agentState ?? 'connected'}
+            </span>
           </div>
-          <p className="text-foreground text-lg font-semibold">{label}</p>
-          <p className="text-muted-foreground mt-1 max-w-xs text-center text-sm">
-            Ask about crops, weather, pests, mandi prices, or schemes.
-          </p>
+          {session.isConnected && (
+            <div className="absolute top-4 right-4">
+              <span className="border-border bg-background/80 text-muted-foreground rounded-full border px-3 py-1 font-mono text-xs">
+                {formatDuration(elapsed)}
+              </span>
+            </div>
+          )}
+
+          <div className="relative flex items-center justify-center">
+            {(agentState === 'listening' || agentState === 'speaking') && (
+              <span
+                className={cn(
+                  'absolute inline-flex size-40 animate-ping rounded-full opacity-60 md:size-56',
+                  getPingColor(agentState)
+                )}
+              />
+            )}
+            <div
+              className={cn(
+                'relative size-32 overflow-hidden rounded-full shadow-lg ring-4 transition-all duration-300 md:size-44',
+                getAvatarRing(agentState)
+              )}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/kisan-sahay-avatar-session.jpg"
+                alt="Kisan Sahay"
+                className="size-full object-cover"
+              />
+            </div>
+            {agentState === 'thinking' && (
+              <div className="absolute -bottom-2 flex gap-1">
+                <span className="size-2 animate-bounce rounded-full bg-amber-500 [animation-delay:-0.3s]" />
+                <span className="size-2 animate-bounce rounded-full bg-amber-500 [animation-delay:-0.15s]" />
+                <span className="size-2 animate-bounce rounded-full bg-amber-500" />
+              </div>
+            )}
+          </div>
+
+          <div className="text-center">
+            <p className="text-foreground text-lg font-semibold">{label}</p>
+            <p className="text-muted-foreground mt-1 max-w-xs text-center text-sm">
+              Ask about crops, weather, pests, mandi prices, or schemes.
+            </p>
+          </div>
+
+          {/* Quick topics — send straight into the chat/voice session */}
+          <div className="flex w-full max-w-md flex-wrap justify-center gap-2">
+            {QUICK_TOPICS.map((topic) => (
+              <button
+                key={topic}
+                type="button"
+                onClick={() => handleQuickTopic(topic)}
+                className="border-border bg-background hover:border-lime-600 hover:bg-lime-50 rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm transition-colors"
+              >
+                {topic}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Right: live transcript, always visible */}

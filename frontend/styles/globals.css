@@ -122,3 +122,61 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Google Translate: fully hide Google's default UI, including any
+   iframe it injects directly into <body>, and undo any spacing it adds. */
+.goog-te-banner-frame,
+.goog-te-banner-frame.skiptranslate,
+#goog-te-banner-frame,
+iframe.goog-te-banner-frame,
+body > iframe {
+  display: none !important;
+  height: 0 !important;
+  width: 0 !important;
+  visibility: hidden !important;
+}
+html,
+html body,
+body.skiptranslate,
+body.translated-ltr,
+body.translated-rtl {
+  top: 0px !important;
+  position: static !important;
+  margin: 0px !important;
+  padding: 0px !important;
+}
+#google_translate_element {
+  display: none !important;
+}
+.goog-tooltip,
+.goog-tooltip:hover {
+  display: none !important;
+}
+.goog-text-highlight {
+  background: none !important;
+  box-shadow: none !important;
+}
+
+/* Subtle animated farm background — soft, light tones */
+@keyframes drift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.farm-animated-bg {
+  background: linear-gradient(120deg, #fbfef8, #f7fee7, #f3fce0, #f7fee7, #fbfef8);
+  background-size: 300% 300%;
+  animation: drift 20s ease infinite;
+}
+
+/* Farm-colored polka dots, drifting gently */
+@keyframes float-slow {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-16px); }
+}
+
+.floating-dot {
+  animation: float-slow 7s ease-in-out infinite;
+  border-radius: 9999px;
+}
