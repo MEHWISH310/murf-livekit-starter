@@ -52,14 +52,16 @@ class Assistant(Agent):
             logger.info(f"lookup_caller: no existing record for '{name}' — new caller")
             return f"No previous record found for {name}. Treat them as a new farmer."
 
-        facts = user["facts"] or {}
+        facts = dict(user["facts"] or {})
+        last_topic = facts.pop("last_topic", None)
         facts_summary = ", ".join(f"{k}: {v}" for k, v in facts.items()) if facts else "no farm details saved yet"
-        logger.info(f"lookup_caller: found existing record for '{name}': {facts}")
+        logger.info(f"lookup_caller: found existing record for '{name}': {user['facts']}")
+        topic_line = f" Last time you helped them with: {last_topic}." if last_topic else ""
         return (
             f"Found a returning farmer named {user['name']}. "
-            f"Known details — {facts_summary}. "
-            "Greet them warmly by name and naturally refer to what you already know, "
-            "don't ask them to repeat it."
+            f"Known details — {facts_summary}.{topic_line} "
+            "Greet them warmly by name, naturally refer to what you already know, "
+            "and if there's a last topic, mention it too — don't ask them to repeat any of it."
         )
 
     @function_tool
@@ -73,6 +75,7 @@ class Assistant(Agent):
         land_size: str | None = None,
         district: str | None = None,
         irrigation_type: str | None = None,
+        last_topic: str | None = None,
     ):
         """Save or update what you know about this farmer, if they have agreed to be remembered.
 
@@ -86,6 +89,7 @@ class Assistant(Agent):
             land_size: Approximate land size the farmer mentioned, in their own words.
             district: District or area the farmer mentioned.
             irrigation_type: Irrigation method the farmer mentioned, e.g. "borewell", "canal", "rain-fed".
+            last_topic: A short summary (under 10 words) of the main thing you helped with in this call, e.g. "wheat sowing timing" or "pest spots on cotton leaves". Overwrites whatever was saved as the last topic before.
         """
         if not consent:
             logger.info(f"save_caller_info: consent is false for '{name}' — not writing to storage")
@@ -103,6 +107,8 @@ class Assistant(Agent):
             facts["district"] = district
         if irrigation_type:
             facts["irrigation_type"] = irrigation_type
+        if last_topic:
+            facts["last_topic"] = last_topic
 
         save_user(user_id, name, language_preference, facts)
         logger.info(f"save_caller_info: saved for '{name}': {facts}")
@@ -121,24 +127,6 @@ class Assistant(Agent):
         delete_user(user_id)
         logger.info(f"forget_me: deleted record for '{name}'")
         return f"All saved information about {name} has been deleted. Treat them as a brand new farmer from now on."
-
-    # To add tools, use the @function_tool decorator.
-    # Here's an example that adds a simple weather tool.
-    # You also have to add `from livekit.agents import function_tool, RunContext` to the top of this file
-    # @function_tool
-    # async def lookup_weather(self, context: RunContext, location: str):
-    #     """Use this tool to look up current weather information in the given location.
-    #
-    #     If the location is not supported by the weather service, the tool will indicate this. You must tell the user the location's weather is unavailable.
-    #
-    #     Args:
-    #         location: The location to look up weather information for (e.g. city name)
-    #     """
-    #
-    #     logger.info(f"Looking up weather for {location}")
-    #
-    #     return "sunny with a temperature of 70 degrees."
-
 
 server = AgentServer()
 
