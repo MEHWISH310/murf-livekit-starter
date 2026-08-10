@@ -1,6 +1,6 @@
-# Voice Agent Starter — Powered by Murf Falcon
+# Kisan Sahay — A Farming Voice Agent, Powered by Murf Falcon
 
-Build a production voice AI agent in 5 minutes. Powered by the fastest TTS on the market - swap the system prompt to build anything from customer support to language tutors.
+Kisan Sahay (किसान सहाय) is a voice-first assistant for farmers, built for the **Farm & Field** track of **10 Days of Voice Agents — VoiceForBharat Edition**. It talks in Hindi, English, or Hinglish, remembers returning callers, and looks up live weather and government scheme information — powered by the fastest TTS on the market, Murf Falcon.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Murf Falcon](https://img.shields.io/badge/TTS-Murf%20Falcon-6366F1)](https://murf.ai/api/docs/text-to-speech/streaming) [![LiveKit](https://img.shields.io/badge/Transport-LiveKit-002cf2)](https://docs.livekit.io) [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org/) [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 
@@ -20,18 +20,21 @@ Build a production voice AI agent in 5 minutes. Powered by the fastest TTS on th
 
 ```mermaid
 flowchart LR
-    A[🎙️ User speaks] -->|audio| B[Deepgram STT]
-    B -->|text| C[LLM]
-    C -->|response text| D[Murf Falcon TTS]
-    D -->|audio| E[LiveKit]
-    E -->|stream| F[🔊 User hears]
+    A[🎙️ Farmer speaks] -->|audio| B[Deepgram STT, multilingual]
+    B -->|text| C[Gemini LLM]
+    C -->|tool calls| D[SQLite memory / Weather API / Scheme dataset]
+    D -->|results| C
+    C -->|response text| E[Murf Falcon TTS]
+    E -->|audio| F[LiveKit]
+    F -->|stream| G[🔊 Farmer hears + live transcript]
 
     style A fill:#444441,stroke:#888780,color:#fff
     style B fill:#185FA5,stroke:#85B7EB,color:#fff
     style C fill:#534AB7,stroke:#AFA9EC,color:#fff
     style D fill:#0F6E56,stroke:#5DCAA5,color:#fff
-    style E fill:#D85A30,stroke:#F0997B,color:#fff
-    style F fill:#444441,stroke:#888780,color:#fff
+    style E fill:#0F6E56,stroke:#5DCAA5,color:#fff
+    style F fill:#D85A30,stroke:#F0997B,color:#fff
+    style G fill:#444441,stroke:#888780,color:#fff
 ```
 
 ---
@@ -58,7 +61,7 @@ flowchart LR
 ### Step 1: Clone the repo
 
 ```bash
-git clone https://github.com/murf-ai/murf-livekit-starter.git
+git clone https://github.com/MEHWISH310/murf-livekit-starter.git
 cd murf-livekit-starter
 ```
 
@@ -74,6 +77,8 @@ Create `.env.local` in both `backend/` and `frontend/` (copy from `.env.example`
 | `MURF_API_KEY`                         | [murf.ai/api/dashboard](https://murf.ai/api/dashboard) | Yes      |
 | `DEEPGRAM_API_KEY`                     | [deepgram.com](https://deepgram.com)                   | Yes      |
 | `GOOGLE_API_KEY` (or `OPENAI_API_KEY`) | Depends on LLM choice                                  | Yes      |
+
+No key is needed for the weather tool — it uses the free, keyless [Open-Meteo](https://open-meteo.com/) API.
 
 ### Step 3: Install backend dependencies
 
@@ -118,7 +123,7 @@ cd frontend && pnpm dev
 
 Then open **http://localhost:3000** in your browser.
 
-You should now see the voice agent UI. Click **Start talking**, allow microphone access, and speak — the agent will respond with Murf Falcon TTS. Ensure your backend and (if using Option B) LiveKit server are running.
+You should now see the voice agent UI. Click **Talk to Kisan Sahay**, allow microphone access, and speak — the agent greets you first, asks your name, and responds with Murf Falcon TTS. Ensure your backend and (if using Option B) LiveKit server are running.
 
 ---
 
@@ -162,7 +167,7 @@ The frontend and backend don't call each other directly — they both connect to
 
 1. Use the **same** `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` on both Railway and Vercel
 2. Set `AGENT_NAME=my-agent` on Vercel — this matches the `agent_name="my-agent"` registered in `backend/src/agent.py`
-3. Verify: Railway logs should show the agent connected to LiveKit. Open your Vercel URL, click **Start talking** — the agent should respond
+3. Verify: Railway logs should show the agent connected to LiveKit. Open your Vercel URL, click **Talk to Kisan Sahay** — the agent should respond
 
 If the agent doesn't connect, double-check that both services point to the same LiveKit project and that the backend is running (check Railway logs).
 
@@ -170,13 +175,29 @@ If the agent doesn't connect, double-check that both services point to the same 
 
 ## Change the Use Case
 
-The default system prompt makes this a **customer support agent**. You can change the agent’s behavior by editing the prompt.
+The system prompt has been changed from the default customer support agent into a farming assistant.
 
-**Where the prompt lives:** `backend/src/agent.py`- the `SYSTEM_PROMPT` constant (near the top of the file, after the imports). Change that string to change what your voice agent does.
+**Where the prompt lives:** `backend/src/prompt.py` — the `SYSTEM_PROMPT` constant. It's structured into sections: IDENTITY, OBJECTIVES, KNOWLEDGE, MEMORY, PRIVACY, LANGUAGE & SCRIPT, TOOLS, GUARDRAILS, and STYLE.
 
-### Example prompts (copy-paste)
+### What Kisan Sahay actually does
 
-**Customer Support (default):**
+- Holds a natural spoken conversation about crops, sowing seasons, pests, weather, mandi prices, and government schemes.
+- Matches the farmer's language and script turn by turn — Hindi in Devanagari, English in English, Hinglish met with Devanagari Hindi in reply (never romanized).
+- Remembers returning farmers by name across calls, with their consent, using a local SQLite database (see Day 4 below).
+- Calls two live/local tools when relevant: a weather forecast lookup and a government scheme lookup (see Day 5 below).
+
+### How out-of-scope questions are handled
+
+Kisan Sahay does not try to answer everything. Per its guardrails in `prompt.py`:
+
+- **Anything outside farming entirely** (e.g. general trivia, unrelated tasks) — the agent politely declines and steers the conversation back to farming.
+- **Mandi (market) prices** — no live price lookup exists. The agent is instructed to never state a specific price as confirmed fact; it gives general framing only and tells the farmer to confirm with their local mandi.
+- **Plant disease diagnosis** from a spoken description alone — the agent describes possible causes but never confidently diagnoses, and recommends an in-person check by a local agricultural officer.
+- **Weather or scheme lookups that fail** — the agent says so honestly and suggests another source, rather than inventing an answer (see Day 5 below).
+
+### Example prompts (original starter reference, kept for anyone forking this repo further)
+
+**Customer Support (original starter default):**
 
 ```
 You are a friendly and efficient customer support agent for a tech company. Help users with account issues, billing questions, and product troubleshooting. Be concise, empathetic, and solution-oriented. If you don't know something, say so honestly and offer to escalate.
@@ -198,13 +219,38 @@ See the Configuration section below for voice, STT, and LLM options.
 
 ---
 
+## What's built on top of the starter, day by day
+
+**Day 1 — Core voice loop.** Forked the starter, wired up Deepgram STT, Gemini LLM, and Murf Falcon TTS, and confirmed a working round-trip conversation.
+
+**Day 2 — Identity, objectives, and guardrails.** Wrote the structured `SYSTEM_PROMPT`, added an `on_user_input_transcribed` listener in `agent.py` that logs whether each turn is Hindi (Devanagari), Hinglish (romanized), or English, to verify code-mixed language handling.
+
+**Day 3 — A frontend built for the track.** Replaced the generic starter UI with a farm-themed interface: custom branding, an animated background, a live-updating transcript panel, clear on-screen states for ready/connecting/listening/speaking/call-ended, a clear on-screen message when microphone access is denied, and an interface language dropdown.
+
+**Day 4 — Memory across calls.** Added SQLite (`backend/src/db.py`) and two function tools the agent calls itself: `lookup_caller` and `save_caller_info` (crops, land size, district, irrigation type, last topic discussed). The agent always asks permission before saving — declining means nothing is written, enforced by a `consent` flag in code. A `forget_me` tool deletes a farmer's record on request. Returning farmers are greeted by name and reminded what was discussed last time.
+
+**Day 5 — Real tools.** Added:
+- `get_weather_forecast` — a **live** call to the free [Open-Meteo](https://open-meteo.com/) API, geocoding the district and returning today's high/low temperature and expected rainfall, always stating the forecast date. On failure, the agent says so and suggests another source instead of guessing.
+- `get_government_scheme_info` — searches a **local, hand-built dataset** (`backend/src/schemes_data.py`) of five major farmer schemes (PM-KISAN, PMFBY crop insurance, Kisan Credit Card, Soil Health Card, PM Kisan Maandhan pension) by name or topic. This is not a live government feed — the agent always tells the farmer to confirm final eligibility with their local agriculture office or Common Service Centre.
+
+---
+
+## Known limitations
+
+- Mandi (market) prices are not looked up live; see "How out-of-scope questions are handled" above for how this is handled instead.
+- The government scheme dataset is static and covers five major schemes, not the full range of state and central schemes.
+- Caller identification is name-based (normalized to an ID), not phone-number based, since this is a browser demo rather than a telephony deployment.
+- Weather lookups depend on correctly resolving the spoken district name; very small or ambiguous place names may fail to geocode.
+
+---
+
 ## Configuration
 
 ### Murf voice
 
 Edit the `tts=murf.TTS(...)` call in `backend/src/agent.py`. Set the `voice` argument to any Murf voice ID. Examples:
 
-- `Anisha` — Indian English (female, default in this starter)
+- `Anisha` — Indian English/Hindi (female, used in this project)
 - `Pooja` — Indian English (female)
 - `Samar` — Indian English (male)
 - `Amara` — US English (female)
@@ -216,7 +262,7 @@ Browse all voices: [Murf Voice Library](https://murf.ai/api/docs/voices-styles/v
 
 ### STT provider
 
-STT is configured in `backend/src/agent.py` in the `AgentSession(stt=...)` call. The default is Deepgram (`deepgram.STT(model="nova-3")`). You can swap to another LiveKit-compatible STT plugin if needed.
+STT is configured in `backend/src/agent.py` in the `AgentSession(stt=...)` call: `deepgram.STT(model="nova-3", language="multi")`. The `language="multi"` setting is what enables reliable Hindi/English code-switch detection. You can swap to another LiveKit-compatible STT plugin if needed.
 
 ### LLM (Gemini vs OpenAI)
 
@@ -235,7 +281,12 @@ Murf Falcon and LiveKit handle audio format internally. For advanced options, se
 murf-livekit-starter/
 ├── backend/                 # Python voice agent (LiveKit Agents + Murf Falcon)
 │   ├── src/
-│   │   └── agent.py         # Agent entrypoint, pipeline (STT/LLM/TTS), system prompt
+│   │   ├── agent.py         # Agent entrypoint, pipeline (STT/LLM/TTS), Assistant class + function tools
+│   │   ├── prompt.py        # SYSTEM_PROMPT
+│   │   ├── db.py            # SQLite persistence for caller memory
+│   │   ├── weather_tool.py  # Live weather lookup via Open-Meteo
+│   │   ├── schemes_data.py  # Local dataset of government farmer schemes
+│   │   └── scheme_tool.py   # Search logic over the schemes dataset
 │   ├── tests/               # Agent tests
 │   ├── .env.example         # Backend env template
 │   ├── pyproject.toml       # Python deps (uv)
@@ -266,6 +317,7 @@ For deeper documentation on each part, see:
 - [Murf Voice Library](https://murf.ai/api/docs/voices-styles/voice-library)
 - [LiveKit Docs](https://docs.livekit.io)
 - [Deepgram Docs](https://developers.deepgram.com)
+- [Open-Meteo API](https://open-meteo.com/)
 - [Murf Falcon Benchmarks](https://murf.ai/falcon/benchmarks)
 - [TTS Latency Benchmarker](https://github.com/sahilsgupta/tts-latency-benchmarker) — run your own p50/p95 tests across providers
 - [Murf Discord](https://discord.gg/FbKAy96Sz7)
