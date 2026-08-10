@@ -8,25 +8,26 @@ from livekit.agents import (
     AgentSession,
     JobContext,
     JobProcess,
-    RunContext,
     cli,
-    function_tool,
     inference,
     tokenize,
     room_io,
     UserInputTranscribedEvent,
+    function_tool,
+    RunContext,
 )
 from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from prompt import SYSTEM_PROMPT
 from db import init_db, get_user, save_user, delete_user, normalize_user_id
+from weather_tool import get_district_forecast, WeatherLookupError
+from scheme_tool import find_schemes, list_all_schemes
 
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
-# Make sure the users table exists before any session tries to use it
 init_db()
 
 
@@ -128,6 +129,69 @@ class Assistant(Agent):
         logger.info(f"forget_me: deleted record for '{name}'")
         return f"All saved information about {name} has been deleted. Treat them as a brand new farmer from now on."
 
+    @function_tool
+    async def get_weather_forecast(self, context: RunContext, district: str):
+        """Look up today's weather forecast for a district in India, using a live weather service.
+
+        Call this whenever the farmer asks about weather, rain, temperature, or whether it's safe to sow, spray, or harvest today. If the farmer already told you their district earlier in this call or it's saved in their known details, use that district automatically instead of asking again — only ask for the district if you truly don't have one.
+
+        Args:
+            district: The district or area name to check the forecast for.
+        """
+        try:
+            forecast = await get_district_forecast(district)
+            logger.info(f"get_weather_forecast: success for '{district}': {forecast}")
+            return (
+                f"Forecast for {forecast['location']}, dated {forecast['date']}: "
+                f"high of {forecast['temp_max']}°C, low of {forecast['temp_min']}°C, "
+                f"expected rainfall {forecast['precipitation_mm']}mm. "
+                "Tell the farmer this is today's forecast, mention the date, and remind them "
+                "conditions can shift, so they should keep an eye on the sky too."
+            )
+        except WeatherLookupError as e:
+            logger.warning(f"get_weather_forecast: failed for '{district}': {e}")
+            return (
+                "The weather lookup failed right now. Tell the farmer you couldn't fetch "
+                "today's forecast, apologize briefly, and suggest they check a local weather "
+                "app or the radio for now, rather than guessing the weather yourself."
+            )
+
+    @function_tool
+    async def get_government_scheme_info(self, context: RunContext, scheme_query: str):
+        """Look up information about Indian government schemes for farmers, from a local reference dataset.
+
+        Call this whenever the farmer asks about a government scheme by name, or asks something like "is there any scheme for me" or "how can the government help me". You can search by scheme name (like "PM-KISAN") or by topic (like "insurance", "loan", "pension", "soil").
+
+        Args:
+            scheme_query: What the farmer is asking about — a scheme name or a topic like "insurance" or "loan".
+        """
+        matches = find_schemes(scheme_query)
+        logger.info(f"get_government_scheme_info: query='{scheme_query}', matches={len(matches)}")
+
+        if not matches:
+            all_names = ", ".join(s["name"] for s in list_all_schemes())
+            return (
+                f"No scheme matched '{scheme_query}' in the local reference list. "
+                f"Tell the farmer you don't have that specific one, mention the schemes you do "
+                f"know about ({all_names}), and suggest they check with their local agriculture "
+                "office or the nearest Common Service Centre for anything more specific."
+            )
+
+        summary_parts = []
+        for s in matches[:2]:
+            summary_parts.append(
+                f"{s['name']} ({s['full_name']}): {s['description']} "
+                f"Eligibility — {s['eligibility']} How to apply — {s['how_to_apply']}"
+            )
+
+        return (
+            " | ".join(summary_parts)
+            + " This is general information from a reference list, not live government data — "
+            "tell the farmer to confirm exact eligibility and current status with their local "
+            "agriculture office or Common Service Centre before applying."
+        )
+
+
 server = AgentServer()
 
 
@@ -140,50 +204,34 @@ server.setup_fnc = prewarm
 
 @server.rtc_session(agent_name="my-agent")
 async def my_agent(ctx: JobContext):
-    # Logging setup
-    # Add any other context you want in all log entries here
     ctx.log_context_fields = {
         "room": ctx.room.name,
     }
 
-    # Set up a voice AI pipeline using Murf Falcon, Gemini, Deepgram, and the LiveKit turn detector
     session = AgentSession(
-        # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
-        # See all available models at https://docs.livekit.io/agents/models/stt/
         stt=deepgram.STT(model="nova-3", language="multi"),
-        # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
-        # See all available models at https://docs.livekit.io/agents/models/llm/
         llm=google.LLM(
-                model="gemini-3.5-flash-lite",
-            ),
-        # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
-        # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
+            model="gemini-3.5-flash-lite",
+        ),
         tts=murf.TTS(
-                voice="Anisha",
-                style="Conversation",
-                tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
-                text_pacing=True
-            ),
-        # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-        # See more at https://docs.livekit.io/agents/build/turns
+            voice="Anisha",
+            style="Conversation",
+            tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
+            text_pacing=True,
+        ),
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
-        # allow the LLM to generate a response while waiting for the end of turn
-        # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
         preemptive_generation=True,
     )
 
-    # Log detected language register for each user turn (Hindi / Hinglish / English)
     @session.on("user_input_transcribed")
     def on_user_input_transcribed(ev: UserInputTranscribedEvent):
         transcript = ev.transcript.strip().lower()
         if not transcript:
             return
 
-        # Check for Devanagari script characters (native Hindi)
         has_devanagari = any(0x0900 <= ord(c) <= 0x097F for c in transcript)
 
-        # Check for common Hinglish / romanized Hindi keywords (farming-focused)
         hindi_keywords = {
             "kya", "hai", "aur", "main", "nahin", "aap", "namaste", "shukriya",
             "mein", "ke", "ki", "se", "ko", "ka", "jo", "toh", "bhi", "ho",
@@ -201,25 +249,6 @@ async def my_agent(ctx: JobContext):
         else:
             logger.info(f"Detected language register: English — '{transcript}'")
 
-    # To use a realtime model instead of a voice pipeline, use the following session setup instead.
-    # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
-    # 1. Install livekit-agents[openai]
-    # 2. Set OPENAI_API_KEY in .env.local
-    # 3. Add `from livekit.plugins import openai` to the top of this file
-    # 4. Use the following session setup instead of the version above
-    # session = AgentSession(
-    #     llm=openai.realtime.RealtimeModel(voice="marin")
-    # )
-
-    # # Add a virtual avatar to the session, if desired
-    # # For other providers, see https://docs.livekit.io/agents/models/avatar/
-    # avatar = hedra.AvatarSession(
-    #   avatar_id="...",  # See https://docs.livekit.io/agents/models/avatar/plugins/hedra
-    # )
-    # # Start the avatar and wait for it to join
-    # await avatar.start(session, room=ctx.room)
-
-    # Start the session, which initializes the voice pipeline and warms up the models
     await session.start(
         agent=Assistant(),
         room=ctx.room,
@@ -235,11 +264,11 @@ async def my_agent(ctx: JobContext):
         ),
     )
 
-    # Join the room and connect to the user
     await ctx.connect()
 
+    # Trigger the agent to greet first, without waiting for the user to speak
     await session.generate_reply(
-        instructions="Greet the farmer warmly, introduce yourself as Kisan Sahay, ask their name, and ask how you can help them today."
+        instructions="Greet the farmer warmly, introduce yourself as Kisan Sahay, ask their name and ask how you can help them today."
     )
 
 
