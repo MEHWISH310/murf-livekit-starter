@@ -20,7 +20,14 @@ from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from prompt import SYSTEM_PROMPT
-from db import init_db, get_user, save_user, delete_user, normalize_user_id
+from db import (
+    init_db,
+    get_user,
+    save_user,
+    delete_user,
+    normalize_user_id,
+    create_escalation as db_create_escalation,
+)
 from weather_tool import get_district_forecast, WeatherLookupError
 from scheme_tool import find_schemes, list_all_schemes
 
@@ -153,7 +160,9 @@ class Assistant(Agent):
             return (
                 "The weather lookup failed right now. Tell the farmer you couldn't fetch "
                 "today's forecast, apologize briefly, and suggest they check a local weather "
-                "app or the radio for now, rather than guessing the weather yourself."
+                "app or the radio for now, rather than guessing the weather yourself. "
+                "If they need a real answer and seem to want one, offer to create a human "
+                "follow-up request using your escalation tool, with their consent."
             )
 
     @function_tool
@@ -189,6 +198,54 @@ class Assistant(Agent):
             + " This is general information from a reference list, not live government data — "
             "tell the farmer to confirm exact eligibility and current status with their local "
             "agriculture office or Common Service Centre before applying."
+        )
+
+    @function_tool
+    async def create_escalation(
+        self,
+        context: RunContext,
+        farmer_name: str,
+        reason_category: str,
+        summary: str,
+        urgency: str,
+        consent: bool,
+        language: str | None = None,
+        follow_up_method: str | None = None,
+    ):
+        """Create a request for a human to follow up with this farmer, only after they've agreed to it.
+
+        Call this in exactly two situations: (1) the market price or weather data you needed is missing, unavailable, or clearly outdated and the farmer needs a real answer, or (2) the farmer describes a serious crop problem — something like widespread crop failure, a severe unexplained disease outbreak, or anything beyond simple pest/disease guidance.
+
+        Before calling this, always tell the farmer in plain words what you want to send to a human (their name, a short summary of the problem, how urgent it seems) and ask if that's okay. Set consent to true only if they clearly agreed, false otherwise — if false, this function will not create anything.
+
+        Never include passwords, OTPs, PINs, account numbers, or other sensitive personal information in the summary.
+
+        Args:
+            farmer_name: The farmer's name.
+            reason_category: Either "missing_or_old_data" or "serious_crop_problem".
+            summary: A short, factual summary (2-3 sentences) covering who needs help, what happened, and what you already checked or told them.
+            urgency: One of "low", "medium", "high", or "emergency".
+            consent: True only if the farmer clearly agreed to you sharing this, false otherwise.
+            language: The language the farmer has been speaking in this call, e.g. "Hindi", "Hinglish", "English".
+            follow_up_method: How the farmer prefers to be followed up with, if they said, e.g. "call back", "same number".
+        """
+        if not consent:
+            logger.info(f"create_escalation: consent false for '{farmer_name}' — not creating")
+            return "Not created. The farmer did not agree to share this with a human, so no request was made."
+
+        escalation_id = db_create_escalation(
+            farmer_name=farmer_name,
+            reason_category=reason_category,
+            summary=summary,
+            urgency=urgency,
+            language=language or "",
+            follow_up_method=follow_up_method or "",
+        )
+        logger.info(f"create_escalation: created #{escalation_id} for '{farmer_name}' ({reason_category}, {urgency})")
+        return (
+            f"Request created with reference ID {escalation_id}. Tell the farmer this reference number, "
+            "and let them know a human from the local agriculture support team will follow up — "
+            "do not promise a specific response time unless you actually know one."
         )
 
 

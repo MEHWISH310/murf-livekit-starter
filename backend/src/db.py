@@ -25,6 +25,21 @@ def init_db():
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS escalations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            farmer_name TEXT NOT NULL,
+            reason_category TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            urgency TEXT NOT NULL,
+            language TEXT,
+            follow_up_method TEXT,
+            status TEXT NOT NULL DEFAULT 'open',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -86,5 +101,63 @@ def save_user(user_id: str, name: str, language_preference: str, facts: dict):
 def delete_user(user_id: str):
     conn = get_connection()
     conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+def create_escalation(
+    farmer_name: str,
+    reason_category: str,
+    summary: str,
+    urgency: str,
+    language: str = "",
+    follow_up_method: str = "",
+) -> int:
+    conn = get_connection()
+    cursor = conn.execute(
+        """
+        INSERT INTO escalations
+            (farmer_name, reason_category, summary, urgency, language, follow_up_method, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'open', ?)
+        """,
+        (
+            farmer_name,
+            reason_category,
+            summary,
+            urgency,
+            language,
+            follow_up_method,
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+    conn.commit()
+    escalation_id = cursor.lastrowid
+    conn.close()
+    return escalation_id
+
+
+def get_open_escalations():
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM escalations WHERE status = 'open' ORDER BY created_at DESC"
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_all_escalations():
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM escalations ORDER BY created_at DESC"
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def resolve_escalation(escalation_id: int):
+    conn = get_connection()
+    conn.execute(
+        "UPDATE escalations SET status = 'resolved' WHERE id = ?", (escalation_id,)
+    )
     conn.commit()
     conn.close()

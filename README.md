@@ -1,6 +1,6 @@
 # Kisan Sahay — A Farming Voice Agent, Powered by Murf Falcon
 
-Kisan Sahay (किसान सहाय) is a voice-first assistant for farmers, built for the **Farm & Field** track of **10 Days of Voice Agents — VoiceForBharat Edition**. It talks in Hindi, English, or Hinglish, remembers returning callers, and looks up live weather and government scheme information — powered by the fastest TTS on the market, Murf Falcon.
+Kisan Sahay (किसान सहाय) is a voice-first assistant for farmers, built for the **Farm & Field** track of **10 Days of Voice Agents — VoiceForBharat Edition**. It talks in Hindi, English, or Hinglish, remembers returning callers, looks up live weather and government scheme information, can place outbound alert calls, and knows when to hand a problem off to a human — powered by the fastest TTS on the market, Murf Falcon.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Murf Falcon](https://img.shields.io/badge/TTS-Murf%20Falcon-6366F1)](https://murf.ai/api/docs/text-to-speech/streaming) [![LiveKit](https://img.shields.io/badge/Transport-LiveKit-002cf2)](https://docs.livekit.io) [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org/) [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 
@@ -22,11 +22,13 @@ Kisan Sahay (किसान सहाय) is a voice-first assistant for farmer
 flowchart LR
     A[🎙️ Farmer speaks] -->|audio| B[Deepgram STT, multilingual]
     B -->|text| C[Gemini LLM]
-    C -->|tool calls| D[SQLite memory / Weather API / Scheme dataset]
+    C -->|tool calls| D[SQLite memory / Weather API / Scheme dataset / Escalations]
     D -->|results| C
     C -->|response text| E[Murf Falcon TTS]
     E -->|audio| F[LiveKit]
     F -->|stream| G[🔊 Farmer hears + live transcript]
+    F -.->|SIP trunk| H[📞 Outbound alert call]
+    D -->|open requests| I[🖥️ Human dashboard]
 
     style A fill:#444441,stroke:#888780,color:#fff
     style B fill:#185FA5,stroke:#85B7EB,color:#fff
@@ -35,6 +37,8 @@ flowchart LR
     style E fill:#0F6E56,stroke:#5DCAA5,color:#fff
     style F fill:#D85A30,stroke:#F0997B,color:#fff
     style G fill:#444441,stroke:#888780,color:#fff
+    style H fill:#D85A30,stroke:#F0997B,color:#fff
+    style I fill:#7C3AED,stroke:#C4B5FD,color:#fff
 ```
 
 ---
@@ -125,6 +129,17 @@ Then open **http://localhost:3000** in your browser.
 
 You should now see the voice agent UI. Click **Talk to Kisan Sahay**, allow microphone access, and speak — the agent greets you first, asks your name, and responds with Murf Falcon TTS. Ensure your backend and (if using Option B) LiveKit server are running.
 
+### Step 6: Run the human-handoff dashboard (optional, for Day 7)
+
+In a separate terminal, no extra install needed:
+
+```bash
+cd backend
+uv run python src/dashboard_server.py
+```
+
+Open **http://localhost:8787** to see all escalation requests the agent has created for a human, auto-refreshing every 10 seconds.
+
 ---
 
 ## Deploy
@@ -177,7 +192,7 @@ If the agent doesn't connect, double-check that both services point to the same 
 
 The system prompt has been changed from the default customer support agent into a farming assistant.
 
-**Where the prompt lives:** `backend/src/prompt.py` — the `SYSTEM_PROMPT` constant. It's structured into sections: IDENTITY, OBJECTIVES, KNOWLEDGE, MEMORY, PRIVACY, LANGUAGE & SCRIPT, TOOLS, GUARDRAILS, and STYLE.
+**Where the prompt lives:** `backend/src/prompt.py` — the `SYSTEM_PROMPT` constant. It's structured into sections: IDENTITY, OBJECTIVES, KNOWLEDGE, MEMORY, PRIVACY, LANGUAGE & SCRIPT, ESCALATION, TOOLS, GUARDRAILS, and STYLE.
 
 ### What Kisan Sahay actually does
 
@@ -185,6 +200,8 @@ The system prompt has been changed from the default customer support agent into 
 - Matches the farmer's language and script turn by turn — Hindi in Devanagari, English in English, Hinglish met with Devanagari Hindi in reply (never romanized).
 - Remembers returning farmers by name across calls, with their consent, using a local SQLite database (see Day 4 below).
 - Calls two live/local tools when relevant: a weather forecast lookup and a government scheme lookup (see Day 5 below).
+- Can place an outbound call to warn a farmer about weather relevant to their crop, without being called first (see Day 6 below).
+- Knows when a problem is beyond it, and creates a tracked request for a human to follow up, with the farmer's consent (see Day 7 below).
 
 ### How out-of-scope questions are handled
 
@@ -193,7 +210,8 @@ Kisan Sahay does not try to answer everything. Per its guardrails in `prompt.py`
 - **Anything outside farming entirely** (e.g. general trivia, unrelated tasks) — the agent politely declines and steers the conversation back to farming.
 - **Mandi (market) prices** — no live price lookup exists. The agent is instructed to never state a specific price as confirmed fact; it gives general framing only and tells the farmer to confirm with their local mandi.
 - **Plant disease diagnosis** from a spoken description alone — the agent describes possible causes but never confidently diagnoses, and recommends an in-person check by a local agricultural officer.
-- **Weather or scheme lookups that fail** — the agent says so honestly and suggests another source, rather than inventing an answer (see Day 5 below).
+- **Weather or scheme lookups that fail** — the agent says so honestly and suggests another source, rather than inventing an answer (see Day 5 below), and can offer to escalate to a human if the farmer needs a real answer (see Day 7 below).
+- **Serious crop problems beyond simple guidance** (e.g. widespread crop failure, a severe unexplained disease outbreak) — the agent does not attempt to solve it alone; it offers to create a human follow-up request instead (see Day 7 below).
 
 ### Example prompts (original starter reference, kept for anyone forking this repo further)
 
@@ -233,6 +251,14 @@ See the Configuration section below for voice, STT, and LLM options.
 - `get_weather_forecast` — a **live** call to the free [Open-Meteo](https://open-meteo.com/) API, geocoding the district and returning today's high/low temperature and expected rainfall, always stating the forecast date. On failure, the agent says so and suggests another source instead of guessing.
 - `get_government_scheme_info` — searches a **local, hand-built dataset** (`backend/src/schemes_data.py`) of five major farmer schemes (PM-KISAN, PMFBY crop insurance, Kisan Credit Card, Soil Health Card, PM Kisan Maandhan pension) by name or topic. This is not a live government feed — the agent always tells the farmer to confirm final eligibility with their local agriculture office or Common Service Centre.
 
+**Day 6 — Outbound calling.** Added a second, dedicated agent (`backend/src/telephony/outbound/agent.py`) that dials out to a farmer over a SIP trunk to deliver a weather warning relevant to their crop, instead of waiting to be called. Since the farmer didn't request the call, the opening line does the real work: in no more than two sentences, it says who is calling (Kisan Sahay), why, and how to opt out of future calls — before anything else. The outbound agent reuses the same weather tool, caller lookup, and government-scheme tool as the main agent, just triggered by an outbound dial script (`backend/src/telephony/outbound/dial.py`) instead of an inbound call. All per-call context (farmer name, district) is baked into the agent's instructions at construction time rather than passed through `generate_reply()`, to avoid a Gemini turn-ordering conflict between a forced opening line and function-tool calls.
+
+**Day 7 — Knowing when to ask for human help.** The agent does not try to solve every problem on its own. Added:
+- A `create_escalation` function tool the agent calls in exactly two situations: (1) the weather or scheme data it needed was missing or clearly unreliable and the farmer needs a real answer, or (2) the farmer describes a serious crop problem beyond safe pest/disease guidance (e.g. widespread crop failure, a severe unexplained outbreak).
+- Before ever calling this tool, the agent tells the farmer in plain words what it wants to send to a human (name, a short summary, how urgent it seems) and only proceeds if the farmer agrees — enforced by the same `consent` flag pattern used for memory in Day 4. The farmer is always given back a reference ID and told a human will follow up.
+- A new `escalations` table in `db.py` (`create_escalation`, `get_open_escalations`, `get_all_escalations`, `resolve_escalation`), tracking farmer name, reason category, a short summary, urgency, language, follow-up method, and status.
+- A **local, dependency-free dashboard** (`backend/src/dashboard_server.py`) — a small Python `http.server` page at `http://localhost:8787` that lists every escalation request (open and resolved), auto-refreshing every 10 seconds, so a human can see what needs following up without needing any external tooling.
+
 ---
 
 ## Known limitations
@@ -248,7 +274,7 @@ See the Configuration section below for voice, STT, and LLM options.
 
 ### Murf voice
 
-Edit the `tts=murf.TTS(...)` call in `backend/src/agent.py`. Set the `voice` argument to any Murf voice ID. Examples:
+Edit the `tts=murf.TTS(...)` call in `backend/src/agent.py` (and `backend/src/telephony/outbound/agent.py` for outbound calls). Set the `voice` argument to any Murf voice ID. Examples:
 
 - `Anisha` — Indian English/Hindi (female, used in this project)
 - `Pooja` — Indian English (female)
@@ -279,29 +305,34 @@ Murf Falcon and LiveKit handle audio format internally. For advanced options, se
 
 ```
 murf-livekit-starter/
-├── backend/                 # Python voice agent (LiveKit Agents + Murf Falcon)
+├── backend/                        # Python voice agent (LiveKit Agents + Murf Falcon)
 │   ├── src/
-│   │   ├── agent.py         # Agent entrypoint, pipeline (STT/LLM/TTS), Assistant class + function tools
-│   │   ├── prompt.py        # SYSTEM_PROMPT
-│   │   ├── db.py            # SQLite persistence for caller memory
-│   │   ├── weather_tool.py  # Live weather lookup via Open-Meteo
-│   │   ├── schemes_data.py  # Local dataset of government farmer schemes
-│   │   └── scheme_tool.py   # Search logic over the schemes dataset
-│   ├── tests/               # Agent tests
-│   ├── .env.example         # Backend env template
-│   ├── pyproject.toml       # Python deps (uv)
-│   └── railway.toml         # Railway deploy config
-├── frontend/                # Next.js UI for voice sessions
+│   │   ├── agent.py                # Inbound agent entrypoint, pipeline (STT/LLM/TTS), Assistant class + function tools
+│   │   ├── prompt.py                # SYSTEM_PROMPT
+│   │   ├── db.py                    # SQLite persistence for caller memory + escalations
+│   │   ├── weather_tool.py          # Live weather lookup via Open-Meteo
+│   │   ├── schemes_data.py          # Local dataset of government farmer schemes
+│   │   ├── scheme_tool.py           # Search logic over the schemes dataset
+│   │   ├── dashboard_server.py      # Day 7 — local dashboard for open/resolved escalations
+│   │   └── telephony/
+│   │       └── outbound/
+│   │           ├── agent.py         # Day 6 — outbound calling agent
+│   │           └── dial.py          # Day 6 — script to trigger an outbound call
+│   ├── tests/                       # Agent tests
+│   ├── .env.example                 # Backend env template
+│   ├── pyproject.toml               # Python deps (uv)
+│   └── railway.toml                 # Railway deploy config
+├── frontend/                        # Next.js UI for voice sessions
 │   ├── app/
-│   │   ├── page.tsx         # Main page
-│   │   └── api/token/       # LiveKit token endpoint (dev)
-│   ├── components/          # UI (agents-ui, app config, theme)
-│   ├── app-config.ts        # Branding, title, button text, accent
-│   ├── .env.example         # Frontend env template
-│   └── package.json         # Node deps (pnpm)
-├── start_app.sh             # Start LiveKit + backend + frontend (macOS/Linux)
-├── start_app.ps1            # Start LiveKit + backend + frontend (Windows)
-├── README.md                # This file
+│   │   ├── page.tsx                 # Main page
+│   │   └── api/token/               # LiveKit token endpoint (dev)
+│   ├── components/                  # UI (agents-ui, app config, theme)
+│   ├── app-config.ts                # Branding, title, button text, accent
+│   ├── .env.example                 # Frontend env template
+│   └── package.json                 # Node deps (pnpm)
+├── start_app.sh                     # Start LiveKit + backend + frontend (macOS/Linux)
+├── start_app.ps1                    # Start LiveKit + backend + frontend (Windows)
+├── README.md                        # This file
 ```
 
 For deeper documentation on each part, see:
