@@ -26,7 +26,7 @@ from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from prompt import SYSTEM_PROMPT
-from db import get_user, normalize_user_id
+from db import get_user, normalize_user_id, start_call, finish_call
 from weather_tool import get_district_forecast, WeatherLookupError
 from scheme_tool import find_schemes, list_all_schemes
 
@@ -49,7 +49,7 @@ OUTBOUND CALL RULES:
 
 
 class OutboundAssistant(Agent):
-    def __init__(self, farmer_name: str, district: str) -> None:
+    def __init__(self, farmer_name: str, district: str, call_id: int) -> None:
         context_note = "\n\nCALL CONTEXT:"
         if farmer_name:
             context_note += f"\n- The farmer's name is {farmer_name}."
@@ -66,6 +66,9 @@ class OutboundAssistant(Agent):
         super().__init__(instructions=SYSTEM_PROMPT + OUTBOUND_CALL_RULES + context_note)
         self._farmer_name = farmer_name
         self._district = district
+        self._call_id = call_id
+        self._outcome: str | None = None
+        self._reason: str = ""
 
     @function_tool
     async def lookup_caller(self, context: RunContext, name: str):
@@ -92,6 +95,8 @@ class OutboundAssistant(Agent):
         try:
             forecast = await get_district_forecast(district)
             logger.info(f"get_weather_forecast: success for '{district}': {forecast}")
+            self._outcome = "success"
+            self._reason = "weather_delivered"
             return (
                 f"Forecast for {forecast['location']}, dated {forecast['date']}: "
                 f"high of {forecast['temp_max']}°C, low of {forecast['temp_min']}°C, "
@@ -113,6 +118,8 @@ class OutboundAssistant(Agent):
             all_names = ", ".join(s["name"] for s in list_all_schemes())
             return f"No scheme matched. Known schemes: {all_names}."
         s = matches[0]
+        self._outcome = "success"
+        self._reason = "scheme_info_delivered"
         return f"{s['name']} ({s['full_name']}): {s['description']} Eligibility — {s['eligibility']}"
 
 
@@ -140,6 +147,8 @@ async def outbound_agent(ctx: JobContext):
     farmer_name = metadata.get("farmer_name", "")
     district = metadata.get("district", "")
 
+    call_id = start_call(channel="sip", farmer_name=farmer_name)
+
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
         llm=google.LLM(model="gemini-3.5-flash-lite"),
@@ -154,8 +163,18 @@ async def outbound_agent(ctx: JobContext):
         preemptive_generation=True,
     )
 
+    assistant = OutboundAssistant(farmer_name=farmer_name, district=district, call_id=call_id)
+
+    async def on_shutdown():
+        outcome = assistant._outcome or "failure"
+        reason = assistant._reason or "no_clear_outcome"
+        finish_call(call_id, outcome=outcome, reason=reason)
+        logger.info(f"outbound call #{call_id} finished: outcome={outcome}, reason={reason}")
+
+    ctx.add_shutdown_callback(on_shutdown)
+
     await session.start(
-        agent=OutboundAssistant(farmer_name=farmer_name, district=district),
+        agent=assistant,
         room=ctx.room,
         room_options=room_io.RoomOptions(
             audio_input=room_io.AudioInputOptions(
@@ -169,7 +188,7 @@ async def outbound_agent(ctx: JobContext):
     # Give the call a moment to fully settle (ringing → answered → audio path
     # established) before the agent starts speaking, so the opening line
     # isn't cut off or spoken into dead air on the farmer's end.
-    await asyncio.sleep(6)
+    await asyncio.sleep(8)
 
     # Simple trigger only — all context (name, district, opening rules) already
     # lives in the agent's instructions, so this stays a plain instruction

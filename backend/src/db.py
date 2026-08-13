@@ -40,6 +40,19 @@ def init_db():
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS calls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel TEXT NOT NULL,
+            farmer_name TEXT,
+            outcome TEXT NOT NULL DEFAULT 'in_progress',
+            reason TEXT,
+            started_at TEXT NOT NULL,
+            ended_at TEXT
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -161,3 +174,59 @@ def resolve_escalation(escalation_id: int):
     )
     conn.commit()
     conn.close()
+
+
+def start_call(channel: str, farmer_name: str = "") -> int:
+    conn = get_connection()
+    cursor = conn.execute(
+        """
+        INSERT INTO calls (channel, farmer_name, outcome, started_at)
+        VALUES (?, ?, 'in_progress', ?)
+        """,
+        (channel, farmer_name, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    call_id = cursor.lastrowid
+    conn.close()
+    return call_id
+
+
+def finish_call(call_id: int, outcome: str, reason: str = "", farmer_name: str = ""):
+    conn = get_connection()
+    if farmer_name:
+        conn.execute(
+            """
+            UPDATE calls SET outcome = ?, reason = ?, ended_at = ?, farmer_name = ?
+            WHERE id = ?
+            """,
+            (outcome, reason, datetime.now(timezone.utc).isoformat(), farmer_name, call_id),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE calls SET outcome = ?, reason = ?, ended_at = ?
+            WHERE id = ?
+            """,
+            (outcome, reason, datetime.now(timezone.utc).isoformat(), call_id),
+        )
+    conn.commit()
+    conn.close()
+
+
+def get_call_stats():
+    conn = get_connection()
+    total = conn.execute("SELECT COUNT(*) FROM calls").fetchone()[0]
+    success = conn.execute("SELECT COUNT(*) FROM calls WHERE outcome = 'success'").fetchone()[0]
+    failed = conn.execute("SELECT COUNT(*) FROM calls WHERE outcome = 'failure'").fetchone()[0]
+    in_progress = conn.execute("SELECT COUNT(*) FROM calls WHERE outcome = 'in_progress'").fetchone()[0]
+    conn.close()
+    return {"total": total, "success": success, "failed": failed, "in_progress": in_progress}
+
+
+def get_recent_calls(limit: int = 25):
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM calls ORDER BY started_at DESC LIMIT ?", (limit,)
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]

@@ -27,6 +27,8 @@ from db import (
     delete_user,
     normalize_user_id,
     create_escalation as db_create_escalation,
+    start_call,
+    finish_call,
 )
 from weather_tool import get_district_forecast, WeatherLookupError
 from scheme_tool import find_schemes, list_all_schemes
@@ -39,9 +41,13 @@ init_db()
 
 
 class Assistant(Agent):
-    def __init__(self) -> None:
+    def __init__(self, call_id: int) -> None:
         super().__init__(instructions=SYSTEM_PROMPT)
         self._current_user_id: str | None = None
+        self._call_id = call_id
+        self._outcome: str | None = None
+        self._reason: str = ""
+        self._farmer_name: str = ""
 
     @function_tool
     async def lookup_caller(self, context: RunContext, name: str):
@@ -54,6 +60,7 @@ class Assistant(Agent):
         """
         user_id = normalize_user_id(name)
         self._current_user_id = user_id
+        self._farmer_name = name
         user = get_user(user_id)
 
         if user is None:
@@ -105,6 +112,7 @@ class Assistant(Agent):
 
         user_id = normalize_user_id(name)
         self._current_user_id = user_id
+        self._farmer_name = name
 
         facts = {}
         if crops:
@@ -148,6 +156,8 @@ class Assistant(Agent):
         try:
             forecast = await get_district_forecast(district)
             logger.info(f"get_weather_forecast: success for '{district}': {forecast}")
+            self._outcome = "success"
+            self._reason = "weather_delivered"
             return (
                 f"Forecast for {forecast['location']}, dated {forecast['date']}: "
                 f"high of {forecast['temp_max']}°C, low of {forecast['temp_min']}°C, "
@@ -185,6 +195,9 @@ class Assistant(Agent):
                 f"know about ({all_names}), and suggest they check with their local agriculture "
                 "office or the nearest Common Service Centre for anything more specific."
             )
+
+        self._outcome = "success"
+        self._reason = "scheme_info_delivered"
 
         summary_parts = []
         for s in matches[:2]:
@@ -242,6 +255,10 @@ class Assistant(Agent):
             follow_up_method=follow_up_method or "",
         )
         logger.info(f"create_escalation: created #{escalation_id} for '{farmer_name}' ({reason_category}, {urgency})")
+
+        self._outcome = "success"
+        self._reason = "escalation_created"
+
         return (
             f"Request created with reference ID {escalation_id}. Tell the farmer this reference number, "
             "and let them know a human from the local agriculture support team will follow up — "
@@ -264,6 +281,8 @@ async def my_agent(ctx: JobContext):
     ctx.log_context_fields = {
         "room": ctx.room.name,
     }
+
+    call_id = start_call(channel="browser")
 
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
@@ -306,8 +325,18 @@ async def my_agent(ctx: JobContext):
         else:
             logger.info(f"Detected language register: English — '{transcript}'")
 
+    assistant = Assistant(call_id=call_id)
+
+    async def on_shutdown():
+        outcome = assistant._outcome or "failure"
+        reason = assistant._reason or "no_clear_outcome"
+        finish_call(call_id, outcome=outcome, reason=reason, farmer_name=assistant._farmer_name)
+        logger.info(f"call #{call_id} finished: outcome={outcome}, reason={reason}")
+
+    ctx.add_shutdown_callback(on_shutdown)
+
     await session.start(
-        agent=Assistant(),
+        agent=assistant,
         room=ctx.room,
         room_options=room_io.RoomOptions(
             audio_input=room_io.AudioInputOptions(
@@ -323,7 +352,6 @@ async def my_agent(ctx: JobContext):
 
     await ctx.connect()
 
-    # Trigger the agent to greet first, without waiting for the user to speak
     await session.generate_reply(
         instructions="Greet the farmer warmly, introduce yourself as Kisan Sahay, ask their name and ask how you can help them today."
     )

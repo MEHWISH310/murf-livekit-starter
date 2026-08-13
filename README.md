@@ -1,6 +1,6 @@
 # Kisan Sahay — A Farming Voice Agent, Powered by Murf Falcon
 
-Kisan Sahay (किसान सहाय) is a voice-first assistant for farmers, built for the **Farm & Field** track of **10 Days of Voice Agents — VoiceForBharat Edition**. It talks in Hindi, English, or Hinglish, remembers returning callers, looks up live weather and government scheme information, can place outbound alert calls, and knows when to hand a problem off to a human — powered by the fastest TTS on the market, Murf Falcon.
+Kisan Sahay (किसान सहाय) is a voice-first assistant for farmers, built for the **Farm & Field** track of **10 Days of Voice Agents — VoiceForBharat Edition**. It talks in Hindi, English, or Hinglish, remembers returning callers, looks up live weather and government scheme information, can place outbound alert calls, knows when to hand a problem off to a human, and tracks how well every call goes — powered by the fastest TTS on the market, Murf Falcon.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Murf Falcon](https://img.shields.io/badge/TTS-Murf%20Falcon-6366F1)](https://murf.ai/api/docs/text-to-speech/streaming) [![LiveKit](https://img.shields.io/badge/Transport-LiveKit-002cf2)](https://docs.livekit.io) [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org/) [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 
@@ -22,13 +22,14 @@ Kisan Sahay (किसान सहाय) is a voice-first assistant for farmer
 flowchart LR
     A[🎙️ Farmer speaks] -->|audio| B[Deepgram STT, multilingual]
     B -->|text| C[Gemini LLM]
-    C -->|tool calls| D[SQLite memory / Weather API / Scheme dataset / Escalations]
+    C -->|tool calls| D[SQLite: memory / escalations / call outcomes]
     D -->|results| C
     C -->|response text| E[Murf Falcon TTS]
     E -->|audio| F[LiveKit]
     F -->|stream| G[🔊 Farmer hears + live transcript]
     F -.->|SIP trunk| H[📞 Outbound alert call]
-    D -->|open requests| I[🖥️ Human dashboard]
+    D -->|open requests| I[🖥️ Human handoff dashboard]
+    D -->|call outcomes| J[📊 Call analytics dashboard]
 
     style A fill:#444441,stroke:#888780,color:#fff
     style B fill:#185FA5,stroke:#85B7EB,color:#fff
@@ -39,6 +40,7 @@ flowchart LR
     style G fill:#444441,stroke:#888780,color:#fff
     style H fill:#D85A30,stroke:#F0997B,color:#fff
     style I fill:#7C3AED,stroke:#C4B5FD,color:#fff
+    style J fill:#7C3AED,stroke:#C4B5FD,color:#fff
 ```
 
 ---
@@ -81,6 +83,7 @@ Create `.env.local` in both `backend/` and `frontend/` (copy from `.env.example`
 | `MURF_API_KEY`                         | [murf.ai/api/dashboard](https://murf.ai/api/dashboard) | Yes      |
 | `DEEPGRAM_API_KEY`                     | [deepgram.com](https://deepgram.com)                   | Yes      |
 | `GOOGLE_API_KEY` (or `OPENAI_API_KEY`) | Depends on LLM choice                                  | Yes      |
+| `LIVEKIT_SIP_OUTBOUND_TRUNK_ID`        | LiveKit Cloud → Telephony → SIP Trunks (see Day 6)      | Only for outbound calling |
 
 No key is needed for the weather tool — it uses the free, keyless [Open-Meteo](https://open-meteo.com/) API.
 
@@ -129,7 +132,7 @@ Then open **http://localhost:3000** in your browser.
 
 You should now see the voice agent UI. Click **Talk to Kisan Sahay**, allow microphone access, and speak — the agent greets you first, asks your name, and responds with Murf Falcon TTS. Ensure your backend and (if using Option B) LiveKit server are running.
 
-### Step 6: Run the human-handoff dashboard (optional, for Day 7)
+### Step 6: Run the human-handoff dashboard (Day 7)
 
 In a separate terminal, no extra install needed:
 
@@ -139,6 +142,30 @@ uv run python src/dashboard_server.py
 ```
 
 Open **http://localhost:8787** to see all escalation requests the agent has created for a human, auto-refreshing every 10 seconds.
+
+### Step 7: Run the call analytics dashboard (Day 8)
+
+In another separate terminal:
+
+```bash
+cd backend
+uv run python src/analytics_dashboard.py
+```
+
+Open **http://localhost:8788** to see total, successful, and failed call counts, the success rate, and a recent-calls table, built from real call data — auto-refreshing every 10 seconds.
+
+### Step 8: Make an outbound call (Day 6, optional — requires Linphone/Twilio setup)
+
+```bash
+# Terminal 1 — start the outbound agent worker
+cd backend
+uv run python src/telephony/outbound/agent.py dev
+
+# Terminal 2 — once the worker shows "registered worker", trigger a call
+uv run python src/telephony/outbound/dial.py --to <linphone-username> --name "Ramesh" --district "Meerut"
+```
+
+See "Day 6 — Outbound calling" below for the full SIP trunk setup this depends on.
 
 ---
 
@@ -202,6 +229,7 @@ The system prompt has been changed from the default customer support agent into 
 - Calls two live/local tools when relevant: a weather forecast lookup and a government scheme lookup (see Day 5 below).
 - Can place an outbound call to warn a farmer about weather relevant to their crop, without being called first (see Day 6 below).
 - Knows when a problem is beyond it, and creates a tracked request for a human to follow up, with the farmer's consent (see Day 7 below).
+- Records whether each call succeeded or failed against a clear definition, visible on a live analytics dashboard (see Day 8 below).
 
 ### How out-of-scope questions are handled
 
@@ -251,13 +279,18 @@ See the Configuration section below for voice, STT, and LLM options.
 - `get_weather_forecast` — a **live** call to the free [Open-Meteo](https://open-meteo.com/) API, geocoding the district and returning today's high/low temperature and expected rainfall, always stating the forecast date. On failure, the agent says so and suggests another source instead of guessing.
 - `get_government_scheme_info` — searches a **local, hand-built dataset** (`backend/src/schemes_data.py`) of five major farmer schemes (PM-KISAN, PMFBY crop insurance, Kisan Credit Card, Soil Health Card, PM Kisan Maandhan pension) by name or topic. This is not a live government feed — the agent always tells the farmer to confirm final eligibility with their local agriculture office or Common Service Centre.
 
-**Day 6 — Outbound calling.** Added a second, dedicated agent (`backend/src/telephony/outbound/agent.py`) that dials out to a farmer over a SIP trunk to deliver a weather warning relevant to their crop, instead of waiting to be called. Since the farmer didn't request the call, the opening line does the real work: in no more than two sentences, it says who is calling (Kisan Sahay), why, and how to opt out of future calls — before anything else. The outbound agent reuses the same weather tool, caller lookup, and government-scheme tool as the main agent, just triggered by an outbound dial script (`backend/src/telephony/outbound/dial.py`) instead of an inbound call. All per-call context (farmer name, district) is baked into the agent's instructions at construction time rather than passed through `generate_reply()`, to avoid a Gemini turn-ordering conflict between a forced opening line and function-tool calls.
+**Day 6 — Outbound calling.** Added a second, dedicated agent (`backend/src/telephony/outbound/agent.py`) that dials out to a farmer over a SIP trunk (set up through LiveKit Cloud, connected to a free Linphone SIP account) to deliver a weather warning relevant to their crop, instead of waiting to be called. Since the farmer didn't request the call, the opening line does the real work: in no more than two sentences, it says who is calling (Kisan Sahay), why, and how to opt out of future calls — before anything else. There's an 8-second pause after the call connects before the agent starts speaking, so the opening line lands cleanly once the call has actually settled, rather than being spoken into a still-connecting line. The outbound agent reuses the same weather tool, caller lookup, and government-scheme tool as the main agent, just triggered by an outbound dial script (`backend/src/telephony/outbound/dial.py`) instead of an inbound call. All per-call context (farmer name, district) is baked into the agent's instructions at construction time rather than passed through `generate_reply()`, to avoid a Gemini turn-ordering conflict between a forced opening line and function-tool calls.
 
 **Day 7 — Knowing when to ask for human help.** The agent does not try to solve every problem on its own. Added:
 - A `create_escalation` function tool the agent calls in exactly two situations: (1) the weather or scheme data it needed was missing or clearly unreliable and the farmer needs a real answer, or (2) the farmer describes a serious crop problem beyond safe pest/disease guidance (e.g. widespread crop failure, a severe unexplained outbreak).
 - Before ever calling this tool, the agent tells the farmer in plain words what it wants to send to a human (name, a short summary, how urgent it seems) and only proceeds if the farmer agrees — enforced by the same `consent` flag pattern used for memory in Day 4. The farmer is always given back a reference ID and told a human will follow up.
 - A new `escalations` table in `db.py` (`create_escalation`, `get_open_escalations`, `get_all_escalations`, `resolve_escalation`), tracking farmer name, reason category, a short summary, urgency, language, follow-up method, and status.
 - A **local, dependency-free dashboard** (`backend/src/dashboard_server.py`) — a small Python `http.server` page at `http://localhost:8787` that lists every escalation request (open and resolved), auto-refreshing every 10 seconds, so a human can see what needs following up without needing any external tooling.
+
+**Day 8 — Call analytics.** Defined success simply and specifically, in line with the Day 2 objectives: a call is successful if the farmer received a weather forecast, received scheme information, or had an escalation created on their behalf — otherwise it's marked a failure once the call ends. Added:
+- A `calls` table in `db.py` (`start_call`, `finish_call`, `get_call_stats`, `get_recent_calls`) that every call, browser or SIP, writes to. A call row is opened the moment a session starts and closed via a LiveKit shutdown callback when it ends, so the outcome is captured even if the farmer just hangs up.
+- Each tool that represents a real, useful outcome (`get_weather_forecast`, `get_government_scheme_info`, `create_escalation`) marks the call as successful with a specific reason the moment it delivers value — not the prompt guessing at success, actual code paths doing it.
+- A second **local, dependency-free dashboard** (`backend/src/analytics_dashboard.py`) at `http://localhost:8788`, showing total calls, successful calls, failed calls, and a success rate, plus a recent-calls table. Only the farmer's name, channel, outcome category, and timestamp are shown — never a transcript, and never any sensitive detail.
 
 ---
 
@@ -267,6 +300,8 @@ See the Configuration section below for voice, STT, and LLM options.
 - The government scheme dataset is static and covers five major schemes, not the full range of state and central schemes.
 - Caller identification is name-based (normalized to an ID), not phone-number based, since this is a browser demo rather than a telephony deployment.
 - Weather lookups depend on correctly resolving the spoken district name; very small or ambiguous place names may fail to geocode.
+- Outbound calling requires a working SIP trunk (Linphone free account or Twilio) configured in LiveKit Cloud; it will not work out of the box without that setup.
+- Call success/failure is determined by whether a specific tool delivered value during the call, not by more nuanced measures like farmer satisfaction.
 
 ---
 
@@ -299,6 +334,17 @@ STT is configured in `backend/src/agent.py` in the `AgentSession(stt=...)` call:
 
 Murf Falcon and LiveKit handle audio format internally. For advanced options, see [Murf API docs](https://murf.ai/api/docs) and [LiveKit docs](https://docs.livekit.io).
 
+### Outbound calling (SIP trunk)
+
+Outbound calling uses a LiveKit outbound SIP trunk pointed at a free [Linphone](https://www.linphone.org/en/) SIP account (Twilio also works if you have a trial). In LiveKit Cloud → Telephony → SIP Trunks, create an outbound trunk with:
+
+- Address: `sip.linphone.org`
+- Transport: `TLS`
+- Numbers: `*` (wildcard — Linphone doesn't provide phone numbers, so authentication below does the identifying instead)
+- Username / Password (under Optional settings): your Linphone SIP credentials
+
+Save the resulting trunk ID as `LIVEKIT_SIP_OUTBOUND_TRUNK_ID` in `backend/.env.local`. On the Linphone app itself, go to Settings → Calls → Advanced call settings and turn **"Media encryption mandatory" OFF** — leaving it on causes calls to fail with a `488 Not acceptable here` SIP error.
+
 ---
 
 ## Project Structure
@@ -309,11 +355,12 @@ murf-livekit-starter/
 │   ├── src/
 │   │   ├── agent.py                # Inbound agent entrypoint, pipeline (STT/LLM/TTS), Assistant class + function tools
 │   │   ├── prompt.py                # SYSTEM_PROMPT
-│   │   ├── db.py                    # SQLite persistence for caller memory + escalations
+│   │   ├── db.py                    # SQLite persistence for caller memory, escalations, and call outcomes
 │   │   ├── weather_tool.py          # Live weather lookup via Open-Meteo
 │   │   ├── schemes_data.py          # Local dataset of government farmer schemes
 │   │   ├── scheme_tool.py           # Search logic over the schemes dataset
 │   │   ├── dashboard_server.py      # Day 7 — local dashboard for open/resolved escalations
+│   │   ├── analytics_dashboard.py   # Day 8 — local dashboard for call success/failure stats
 │   │   └── telephony/
 │   │       └── outbound/
 │   │           ├── agent.py         # Day 6 — outbound calling agent
@@ -349,6 +396,7 @@ For deeper documentation on each part, see:
 - [LiveKit Docs](https://docs.livekit.io)
 - [Deepgram Docs](https://developers.deepgram.com)
 - [Open-Meteo API](https://open-meteo.com/)
+- [Linphone](https://www.linphone.org/en/)
 - [Murf Falcon Benchmarks](https://murf.ai/falcon/benchmarks)
 - [TTS Latency Benchmarker](https://github.com/sahilsgupta/tts-latency-benchmarker) — run your own p50/p95 tests across providers
 - [Murf Discord](https://discord.gg/FbKAy96Sz7)
