@@ -167,6 +167,8 @@ class Assistant(Agent):
             )
         except WeatherLookupError as e:
             logger.warning(f"get_weather_forecast: failed for '{district}': {e}")
+            self._outcome = "failure"
+            self._reason = "weather_lookup_failed"
             return (
                 "The weather lookup failed right now. Tell the farmer you couldn't fetch "
                 "today's forecast, apologize briefly, and suggest they check a local weather "
@@ -189,6 +191,8 @@ class Assistant(Agent):
 
         if not matches:
             all_names = ", ".join(s["name"] for s in list_all_schemes())
+            self._outcome = "failure"
+            self._reason = "scheme_not_found"
             return (
                 f"No scheme matched '{scheme_query}' in the local reference list. "
                 f"Tell the farmer you don't have that specific one, mention the schemes you do "
@@ -328,8 +332,12 @@ async def my_agent(ctx: JobContext):
     assistant = Assistant(call_id=call_id)
 
     async def on_shutdown():
-        outcome = assistant._outcome or "failure"
-        reason = assistant._reason or "no_clear_outcome"
+        # Default to success if the call completed with no recorded error —
+        # not every helpful turn goes through a tool (e.g. general farming
+        # advice answered directly from the model's own knowledge), so the
+        # absence of a tool-set outcome must not be read as failure.
+        outcome = assistant._outcome or "success"
+        reason = assistant._reason or "general_conversation"
         finish_call(call_id, outcome=outcome, reason=reason, farmer_name=assistant._farmer_name)
         logger.info(f"call #{call_id} finished: outcome={outcome}, reason={reason}")
 

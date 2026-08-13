@@ -104,6 +104,8 @@ class OutboundAssistant(Agent):
             )
         except WeatherLookupError as e:
             logger.warning(f"get_weather_forecast: failed for '{district}': {e}")
+            self._outcome = "failure"
+            self._reason = "weather_lookup_failed"
             return "The weather lookup failed right now. Say so honestly, do not invent a forecast."
 
     @function_tool
@@ -116,6 +118,8 @@ class OutboundAssistant(Agent):
         matches = find_schemes(scheme_query)
         if not matches:
             all_names = ", ".join(s["name"] for s in list_all_schemes())
+            self._outcome = "failure"
+            self._reason = "scheme_not_found"
             return f"No scheme matched. Known schemes: {all_names}."
         s = matches[0]
         self._outcome = "success"
@@ -166,8 +170,11 @@ async def outbound_agent(ctx: JobContext):
     assistant = OutboundAssistant(farmer_name=farmer_name, district=district, call_id=call_id)
 
     async def on_shutdown():
-        outcome = assistant._outcome or "failure"
-        reason = assistant._reason or "no_clear_outcome"
+        # Same default-to-success logic as the inbound agent — an outbound
+        # weather alert that gets delivered and discussed without a tool
+        # re-call on a later turn should not register as a failure.
+        outcome = assistant._outcome or "success"
+        reason = assistant._reason or "general_conversation"
         finish_call(call_id, outcome=outcome, reason=reason)
         logger.info(f"outbound call #{call_id} finished: outcome={outcome}, reason={reason}")
 
