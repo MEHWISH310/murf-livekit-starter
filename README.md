@@ -1,6 +1,6 @@
 # Kisan Sahay — A Farming Voice Agent, Powered by Murf Falcon
 
-Kisan Sahay (किसान सहाय) is a voice-first assistant for farmers, built for the **Farm & Field** track of **10 Days of Voice Agents — VoiceForBharat Edition**. It talks in Hindi, English, or Hinglish, remembers returning callers, looks up live weather and government scheme information, can place outbound alert calls, knows when to hand a problem off to a human, and tracks how well every call goes — powered by the fastest TTS on the market, Murf Falcon.
+Kisan Sahay (किसान सहाय) is a voice-first assistant for farmers, built for the **Farm & Field** track of **10 Days of Voice Agents — VoiceForBharat Edition**. It talks in Hindi, English, or Hinglish, remembers returning callers, looks up live weather and government scheme information, can place outbound alert calls, knows when to hand a problem off to a human, tracks how well every call goes, and can hand a conversation to a focused crop specialist when needed — powered by the fastest TTS on the market, Murf Falcon.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Murf Falcon](https://img.shields.io/badge/TTS-Murf%20Falcon-6366F1)](https://murf.ai/api/docs/text-to-speech/streaming) [![LiveKit](https://img.shields.io/badge/Transport-LiveKit-002cf2)](https://docs.livekit.io) [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org/) [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 
@@ -21,9 +21,11 @@ Kisan Sahay (किसान सहाय) is a voice-first assistant for farmer
 ```mermaid
 flowchart LR
     A[🎙️ Farmer speaks] -->|audio| B[Deepgram STT, multilingual]
-    B -->|text| C[Gemini LLM]
+    B -->|text| C[Gemini LLM — Kisan Sahay]
     C -->|tool calls| D[SQLite: memory / escalations / call outcomes]
     D -->|results| C
+    C -->|handoff| K[Crop Specialist Agent]
+    K -->|hand back| C
     C -->|response text| E[Murf Falcon TTS]
     E -->|audio| F[LiveKit]
     F -->|stream| G[🔊 Farmer hears + live transcript]
@@ -41,6 +43,7 @@ flowchart LR
     style H fill:#D85A30,stroke:#F0997B,color:#fff
     style I fill:#7C3AED,stroke:#C4B5FD,color:#fff
     style J fill:#7C3AED,stroke:#C4B5FD,color:#fff
+    style K fill:#B45309,stroke:#FCD34D,color:#fff
 ```
 
 ---
@@ -167,6 +170,10 @@ uv run python src/telephony/outbound/dial.py --to <linphone-username> --name "Ra
 
 See "Day 6 — Outbound calling" below for the full SIP trunk setup this depends on.
 
+### Step 9: Test the crop specialist handoff (Day 9)
+
+No extra setup — it's part of the main agent. In a normal browser call, describe a specific crop health problem in detail (e.g. "my tomato leaves have black spots and are wilting") and confirm when asked. The conversation should hand off to the crop specialist without you having to repeat your problem, and hand back to Kisan Sahay if you then ask about weather, schemes, or anything outside crop troubleshooting.
+
 ---
 
 ## Deploy
@@ -219,7 +226,7 @@ If the agent doesn't connect, double-check that both services point to the same 
 
 The system prompt has been changed from the default customer support agent into a farming assistant.
 
-**Where the prompt lives:** `backend/src/prompt.py` — the `SYSTEM_PROMPT` constant. It's structured into sections: IDENTITY, OBJECTIVES, KNOWLEDGE, MEMORY, PRIVACY, LANGUAGE & SCRIPT, ESCALATION, TOOLS, GUARDRAILS, and STYLE.
+**Where the prompt lives:** `backend/src/prompt.py` — the `SYSTEM_PROMPT` constant (IDENTITY, OBJECTIVES, KNOWLEDGE, MEMORY, PRIVACY, LANGUAGE & SCRIPT, ESCALATION, GUARDRAILS, TOOLS, STYLE) and the `CROP_SPECIALIST_PROMPT` constant for the crop specialist agent.
 
 ### What Kisan Sahay actually does
 
@@ -230,6 +237,7 @@ The system prompt has been changed from the default customer support agent into 
 - Can place an outbound call to warn a farmer about weather relevant to their crop, without being called first (see Day 6 below).
 - Knows when a problem is beyond it, and creates a tracked request for a human to follow up, with the farmer's consent (see Day 7 below).
 - Records whether each call succeeded or failed against a clear definition, visible on a live analytics dashboard (see Day 8 below).
+- Hands the conversation off to a focused crop problem specialist when the farmer needs detailed troubleshooting, without making them repeat what they've already said (see Day 9 below).
 
 ### How out-of-scope questions are handled
 
@@ -239,7 +247,7 @@ Kisan Sahay does not try to answer everything. Per its guardrails in `prompt.py`
 - **Mandi (market) prices** — no live price lookup exists. The agent is instructed to never state a specific price as confirmed fact; it gives general framing only and tells the farmer to confirm with their local mandi.
 - **Plant disease diagnosis** from a spoken description alone — the agent describes possible causes but never confidently diagnoses, and recommends an in-person check by a local agricultural officer.
 - **Weather or scheme lookups that fail** — the agent says so honestly and suggests another source, rather than inventing an answer (see Day 5 below), and can offer to escalate to a human if the farmer needs a real answer (see Day 7 below).
-- **Serious crop problems beyond simple guidance** (e.g. widespread crop failure, a severe unexplained disease outbreak) — the agent does not attempt to solve it alone; it offers to create a human follow-up request instead (see Day 7 below).
+- **Serious crop problems beyond simple guidance** (e.g. widespread crop failure, a severe unexplained disease outbreak) — the agent does not attempt to solve it alone; it offers to create a human follow-up request instead (see Day 7 below), or hands off to the crop specialist for focused troubleshooting first (see Day 9 below).
 
 ### Example prompts (original starter reference, kept for anyone forking this repo further)
 
@@ -289,8 +297,14 @@ See the Configuration section below for voice, STT, and LLM options.
 
 **Day 8 — Call analytics.** Defined success simply and specifically, in line with the Day 2 objectives: a call is successful if the farmer received a weather forecast, received scheme information, or had an escalation created on their behalf — otherwise it's marked a failure once the call ends. Added:
 - A `calls` table in `db.py` (`start_call`, `finish_call`, `get_call_stats`, `get_recent_calls`) that every call, browser or SIP, writes to. A call row is opened the moment a session starts and closed via a LiveKit shutdown callback when it ends, so the outcome is captured even if the farmer just hangs up.
-- Each tool that represents a real, useful outcome (`get_weather_forecast`, `get_government_scheme_info`, `create_escalation`) marks the call as successful with a specific reason the moment it delivers value — not the prompt guessing at success, actual code paths doing it.
+- Each tool that represents a real, useful outcome (`get_weather_forecast`, `get_government_scheme_info`, `create_escalation`) marks the call as successful with a specific reason the moment it delivers value — not the prompt guessing at success, actual code paths doing it. A call that ends with no tool ever firing (e.g. a general farming question answered directly from the model's own knowledge) is now also treated as a success by default, rather than being misread as a failure — only genuine failed lookups (a weather API error, a scheme with no match) are explicitly marked as failures.
 - A second **local, dependency-free dashboard** (`backend/src/analytics_dashboard.py`) at `http://localhost:8788`, showing total calls, successful calls, failed calls, and a success rate, plus a recent-calls table. Only the farmer's name, channel, outcome category, and timestamp are shown — never a transcript, and never any sensitive detail.
+
+**Day 9 — Handing off to a specialist agent.** Kisan Sahay is a generalist; it doesn't try to be an expert at deep crop troubleshooting. Added:
+- A separate `CropSpecialistAgent` (`backend/src/crop_specialist.py`), with its own focused prompt (`CROP_SPECIALIST_PROMPT` in `prompt.py`) covering only crop pest and disease troubleshooting — symptoms, likely causes, what to check — with its own guardrails against confident diagnosis.
+- A `transfer_to_crop_specialist` tool on the main agent, called only when the farmer describes a specific crop health problem needing focused troubleshooting, not for simple factual questions. The main agent tells the farmer in one short sentence that it's connecting them before handing off.
+- The handoff works by the tool returning a new `Agent` instance, which LiveKit automatically switches the active session to — carrying the full conversation history across, so the farmer never has to re-explain their problem. The specialist introduces itself on entry (`on_enter`) and continues from what's already been said.
+- A `transfer_back_to_kisan_sahay` tool on the specialist lets it hand the conversation back once its troubleshooting is done, or if the farmer asks about something outside its scope (weather, schemes, general questions) — the specialist keeps a reference to the original `Assistant` instance so returning preserves all prior state (farmer name, call tracking, etc).
 
 ---
 
@@ -302,6 +316,7 @@ See the Configuration section below for voice, STT, and LLM options.
 - Weather lookups depend on correctly resolving the spoken district name; very small or ambiguous place names may fail to geocode.
 - Outbound calling requires a working SIP trunk (Linphone free account or Twilio) configured in LiveKit Cloud; it will not work out of the box without that setup.
 - Call success/failure is determined by whether a specific tool delivered value during the call, not by more nuanced measures like farmer satisfaction.
+- The crop specialist handoff carries conversation history across, but its own opening line is model-generated per call — very occasionally it may not perfectly match the farmer's most recent language, and this is being tightened.
 
 ---
 
@@ -354,11 +369,12 @@ murf-livekit-starter/
 ├── backend/                        # Python voice agent (LiveKit Agents + Murf Falcon)
 │   ├── src/
 │   │   ├── agent.py                # Inbound agent entrypoint, pipeline (STT/LLM/TTS), Assistant class + function tools
-│   │   ├── prompt.py                # SYSTEM_PROMPT
+│   │   ├── prompt.py                # SYSTEM_PROMPT + CROP_SPECIALIST_PROMPT
 │   │   ├── db.py                    # SQLite persistence for caller memory, escalations, and call outcomes
 │   │   ├── weather_tool.py          # Live weather lookup via Open-Meteo
 │   │   ├── schemes_data.py          # Local dataset of government farmer schemes
 │   │   ├── scheme_tool.py           # Search logic over the schemes dataset
+│   │   ├── crop_specialist.py       # Day 9 — specialist agent + handoff-back tool
 │   │   ├── dashboard_server.py      # Day 7 — local dashboard for open/resolved escalations
 │   │   ├── analytics_dashboard.py   # Day 8 — local dashboard for call success/failure stats
 │   │   └── telephony/
