@@ -272,13 +272,11 @@ class Assistant(Agent):
 
     @function_tool
     async def transfer_to_crop_specialist(self, context: RunContext):
-        """Hand off the conversation to the crop problem specialist, for anything requiring deeper crop disease, pest, or crop-health troubleshooting than simple guidance.
+        """Hand the conversation off to the crop problem specialist for focused troubleshooting.
 
-        Call this when the farmer describes a specific crop health problem in detail and wants focused troubleshooting help — symptoms, likely causes, and what to try — beyond what a quick answer covers. Do not call this for simple factual questions like sowing time, weather, mandi prices, or schemes; the main agent handles those directly.
-
-        Before calling this, tell the farmer in one short sentence that you're connecting them to the crop specialist. Do not ask permission — this is a normal, expected handoff, not a data-sharing action.
+        First tell the farmer in one short sentence that you are handing them off to the crop specialist, then call this tool immediately; the crop specialist will introduce themselves after the handoff.
         """
-        logger.info(f"transfer_to_crop_specialist: handing off for '{self._farmer_name or 'unknown'}'")
+        logger.info("transfer_to_crop_specialist: handing off to crop specialist")
         return CropSpecialistAgent(main_assistant=self, farmer_name=self._farmer_name)
 
 
