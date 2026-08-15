@@ -1,6 +1,8 @@
 # Kisan Sahay — A Farming Voice Agent, Powered by Murf Falcon
 
-Kisan Sahay (किसान सहाय) is a voice-first assistant for farmers, built for the **Farm & Field** track of **10 Days of Voice Agents — VoiceForBharat Edition**. It talks in Hindi, English, or Hinglish, remembers returning callers, looks up live weather and government scheme information, can place outbound alert calls, knows when to hand a problem off to a human, tracks how well every call goes, and can hand a conversation to a focused crop specialist when needed — powered by the fastest TTS on the market, Murf Falcon.
+Kisan Sahay (किसान सहाय) is a voice-first assistant for farmers, built for the **Farm & Field** track of **10 Days of Voice Agents — VoiceForBharat Edition** by Murf AI. It talks in Hindi, English, or Hinglish, remembers returning callers, looks up live weather and government scheme information, can place outbound alert calls, knows when to hand a problem off to a human, tracks how well every call goes, and can hand a conversation to a focused crop specialist when needed — powered by the fastest TTS on the market, Murf Falcon.
+
+**Challenge complete — full 10-day build journey written up here: [Building Kisan Sahay: A Voice Agent for Farmers, in 10 Days](https://dev.to/mehwish_e1e7e09af6e0754ed/building-kisan-sahay-a-voice-agent-for-farmers-in-10-days-5h6p)**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Murf Falcon](https://img.shields.io/badge/TTS-Murf%20Falcon-6366F1)](https://murf.ai/api/docs/text-to-speech/streaming) [![LiveKit](https://img.shields.io/badge/Transport-LiveKit-002cf2)](https://docs.livekit.io) [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org/) [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 
@@ -67,10 +69,12 @@ flowchart LR
   ```
 - A [LiveKit](https://cloud.livekit.io/) project (free tier available)
 
-### Step 1: Clone the repo
+### Step 1: Fork and clone the repo
+
+Fork [MEHWISH310/murf-livekit-starter](https://github.com/MEHWISH310/murf-livekit-starter), then clone your fork:
 
 ```bash
-git clone https://github.com/MEHWISH310/murf-livekit-starter.git
+git clone <your-repo-url>
 cd murf-livekit-starter
 ```
 
@@ -118,10 +122,10 @@ chmod +x start_app.sh
 .\start_app.ps1
 ```
 
-**Option B - Separate terminals:**
+**Option B - Separate terminals (three terminals total):**
 
 ```bash
-# Terminal 1 — LiveKit Server
+# Terminal 1 — LiveKit Server (only needed if self-hosting; skip if using LiveKit Cloud)
 livekit-server --dev
 
 # Terminal 2 — Backend agent
@@ -133,7 +137,7 @@ cd frontend && pnpm dev
 
 Then open **http://localhost:3000** in your browser.
 
-You should now see the voice agent UI. Click **Talk to Kisan Sahay**, allow microphone access, and speak — the agent greets you first, asks your name, and responds with Murf Falcon TTS. Ensure your backend and (if using Option B) LiveKit server are running.
+You should now see the voice agent UI. Click **Talk to Kisan Sahay**, allow microphone access, and speak — the agent greets you first, asks your name, and responds with Murf Falcon TTS. Ensure your backend and (if using Option B with self-hosted LiveKit) LiveKit server are running.
 
 ### Step 6: Run the human-handoff dashboard (Day 7)
 
@@ -172,7 +176,7 @@ See "Day 6 — Outbound calling" below for the full SIP trunk setup this depends
 
 ### Step 9: Test the crop specialist handoff (Day 9)
 
-No extra setup — it's part of the main agent. In a normal browser call, describe a specific crop health problem in detail (e.g. "my tomato leaves have black spots and are wilting") and confirm when asked. The conversation should hand off to the crop specialist without you having to repeat your problem, and hand back to Kisan Sahay if you then ask about weather, schemes, or anything outside crop troubleshooting.
+No extra setup — it's part of the main agent. In a normal browser call, describe a specific crop health problem in detail (e.g. "my tomato leaves have black spots and are wilting"). The main agent hands off to the crop specialist immediately, in the same turn it tells you it's connecting you — no confirmation needed, and you won't have to repeat your problem. Ask the specialist something outside its scope (weather, schemes, general questions) to see it hand the conversation back to Kisan Sahay.
 
 ---
 
@@ -231,13 +235,13 @@ The system prompt has been changed from the default customer support agent into 
 ### What Kisan Sahay actually does
 
 - Holds a natural spoken conversation about crops, sowing seasons, pests, weather, mandi prices, and government schemes.
-- Matches the farmer's language and script turn by turn — Hindi in Devanagari, English in English, Hinglish met with Devanagari Hindi in reply (never romanized).
+- Matches the farmer's language and script turn by turn — Hindi in Devanagari, English in English, Hinglish met with Devanagari Hindi in reply (never romanized) — judged only on the farmer's most recent message, every single time, even across an agent handoff.
 - Remembers returning farmers by name across calls, with their consent, using a local SQLite database (see Day 4 below).
 - Calls two live/local tools when relevant: a weather forecast lookup and a government scheme lookup (see Day 5 below).
 - Can place an outbound call to warn a farmer about weather relevant to their crop, without being called first (see Day 6 below).
 - Knows when a problem is beyond it, and creates a tracked request for a human to follow up, with the farmer's consent (see Day 7 below).
 - Records whether each call succeeded or failed against a clear definition, visible on a live analytics dashboard (see Day 8 below).
-- Hands the conversation off to a focused crop problem specialist when the farmer needs detailed troubleshooting, without making them repeat what they've already said (see Day 9 below).
+- Hands the conversation off to a focused crop problem specialist when the farmer needs detailed troubleshooting, without making them repeat what they've already said, and without waiting for a confirmation that was never needed (see Day 9 below).
 
 ### How out-of-scope questions are handled
 
@@ -295,16 +299,18 @@ See the Configuration section below for voice, STT, and LLM options.
 - A new `escalations` table in `db.py` (`create_escalation`, `get_open_escalations`, `get_all_escalations`, `resolve_escalation`), tracking farmer name, reason category, a short summary, urgency, language, follow-up method, and status.
 - A **local, dependency-free dashboard** (`backend/src/dashboard_server.py`) — a small Python `http.server` page at `http://localhost:8787` that lists every escalation request (open and resolved), auto-refreshing every 10 seconds, so a human can see what needs following up without needing any external tooling.
 
-**Day 8 — Call analytics.** Defined success simply and specifically, in line with the Day 2 objectives: a call is successful if the farmer received a weather forecast, received scheme information, or had an escalation created on their behalf — otherwise it's marked a failure once the call ends. Added:
+**Day 8 — Call analytics.** Defined success simply and specifically, in line with the Day 2 objectives: a call is successful if the farmer received a weather forecast, received scheme information, had an escalation created on their behalf, or otherwise completed with no recorded error — a genuine failure is now only logged when something specific actually went wrong (a weather lookup that failed, a scheme with no match). Added:
 - A `calls` table in `db.py` (`start_call`, `finish_call`, `get_call_stats`, `get_recent_calls`) that every call, browser or SIP, writes to. A call row is opened the moment a session starts and closed via a LiveKit shutdown callback when it ends, so the outcome is captured even if the farmer just hangs up.
-- Each tool that represents a real, useful outcome (`get_weather_forecast`, `get_government_scheme_info`, `create_escalation`) marks the call as successful with a specific reason the moment it delivers value — not the prompt guessing at success, actual code paths doing it. A call that ends with no tool ever firing (e.g. a general farming question answered directly from the model's own knowledge) is now also treated as a success by default, rather than being misread as a failure — only genuine failed lookups (a weather API error, a scheme with no match) are explicitly marked as failures.
+- Each tool that represents a real, useful outcome (`get_weather_forecast`, `get_government_scheme_info`, `create_escalation`) marks the call as successful with a specific reason the moment it delivers value. A call that ends with no tool ever firing — e.g. a general farming question answered directly from the model's own knowledge — is treated as a success by default rather than misread as a failure, since not every helpful turn goes through a tool.
 - A second **local, dependency-free dashboard** (`backend/src/analytics_dashboard.py`) at `http://localhost:8788`, showing total calls, successful calls, failed calls, and a success rate, plus a recent-calls table. Only the farmer's name, channel, outcome category, and timestamp are shown — never a transcript, and never any sensitive detail.
 
 **Day 9 — Handing off to a specialist agent.** Kisan Sahay is a generalist; it doesn't try to be an expert at deep crop troubleshooting. Added:
 - A separate `CropSpecialistAgent` (`backend/src/crop_specialist.py`), with its own focused prompt (`CROP_SPECIALIST_PROMPT` in `prompt.py`) covering only crop pest and disease troubleshooting — symptoms, likely causes, what to check — with its own guardrails against confident diagnosis.
-- A `transfer_to_crop_specialist` tool on the main agent, called only when the farmer describes a specific crop health problem needing focused troubleshooting, not for simple factual questions. The main agent tells the farmer in one short sentence that it's connecting them before handing off.
-- The handoff works by the tool returning a new `Agent` instance, which LiveKit automatically switches the active session to — carrying the full conversation history across, so the farmer never has to re-explain their problem. The specialist introduces itself on entry (`on_enter`) and continues from what's already been said.
+- A `transfer_to_crop_specialist` tool on the main agent, called only when the farmer describes a specific crop health problem needing focused troubleshooting, not for simple factual questions. The main agent tells the farmer in one short sentence that it's connecting them, then calls the tool immediately in that same turn — this is not a consent-based flow like escalation, so it never waits on a "sure" or "okay" from the farmer first.
+- The handoff works by the tool returning a new `Agent` instance, which LiveKit automatically switches the active session to — carrying the full conversation history across, so the farmer never has to re-explain their problem. The specialist introduces itself on entry (`on_enter`) and continues from what's already been said, explicitly instructed to match the farmer's most recent language and script rather than defaulting to Hindi just because it's a fresh agent instance.
 - A `transfer_back_to_kisan_sahay` tool on the specialist lets it hand the conversation back once its troubleshooting is done, or if the farmer asks about something outside its scope (weather, schemes, general questions) — the specialist keeps a reference to the original `Assistant` instance so returning preserves all prior state (farmer name, call tracking, etc).
+
+**Day 10 — Wrap-up.** Challenge complete. Wrote up the full 10-day build as a public blog post covering the problem Kisan Sahay solves, every feature built day by day, the real bugs hit along the way (language mismatches on handoff, outcome-tracking blind spots, SIP trunk quirks) and how they were fixed, and a practical starting point for anyone building their own voice agent on this stack. Read it here: [Building Kisan Sahay: A Voice Agent for Farmers, in 10 Days](https://dev.to/mehwish_e1e7e09af6e0754ed/building-kisan-sahay-a-voice-agent-for-farmers-in-10-days-5h6p).
 
 ---
 
@@ -315,8 +321,7 @@ See the Configuration section below for voice, STT, and LLM options.
 - Caller identification is name-based (normalized to an ID), not phone-number based, since this is a browser demo rather than a telephony deployment.
 - Weather lookups depend on correctly resolving the spoken district name; very small or ambiguous place names may fail to geocode.
 - Outbound calling requires a working SIP trunk (Linphone free account or Twilio) configured in LiveKit Cloud; it will not work out of the box without that setup.
-- Call success/failure is determined by whether a specific tool delivered value during the call, not by more nuanced measures like farmer satisfaction.
-- The crop specialist handoff carries conversation history across, but its own opening line is model-generated per call — very occasionally it may not perfectly match the farmer's most recent language, and this is being tightened.
+- Call success/failure is determined by whether a specific tool delivered value (or a call otherwise ended with no recorded error), not by more nuanced measures like farmer satisfaction.
 
 ---
 
@@ -407,6 +412,7 @@ For deeper documentation on each part, see:
 
 ## Links
 
+- [Full 10-day build write-up](https://dev.to/mehwish_e1e7e09af6e0754ed/building-kisan-sahay-a-voice-agent-for-farmers-in-10-days-5h6p)
 - [Murf API Docs](https://murf.ai/api/docs)
 - [Murf Voice Library](https://murf.ai/api/docs/voices-styles/voice-library)
 - [LiveKit Docs](https://docs.livekit.io)
